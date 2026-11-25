@@ -1,0 +1,11 @@
+[package]
+name = "rsmigemo"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "Generate regular expressions that match Japanese text from romaji queries (a Rust port of C/Migemo)"
+keywords = ["migemo", "japanese", "romaji", "regex", "search"]
+categories = ["text-processing", "internationalization"]
+exclude = ["DESIGN.md", "scripts/"]
+
+[dependencies]
