@@ -34,7 +34,7 @@ rsmigemo decodes each input file to UTF-8 once, when it is loaded:
 |-----------------------|--------------------------------------------------------------|
 | UTF-8 text            | `String::from_utf8_lossy`, leading BOM stripped              |
 | CP932 / EUC-JP text   | `encoding_rs` (`SHIFT_JIS`/`EUC_JP`) → `String`              |
-| `Encoding::Auto`      | port of `charset_detect_buf` (first 4 KiB heuristic)         |
+| no encoding given     | `charset_detect_buf` scoring (first 4 KiB), std UTF-8 check  |
 | sdict, charset=UTF8   | codes are already `char`s; word buffer is validated as UTF-8 |
 | sdict, CP932/EUC-JP   | each 1–2 byte code → `char` and word buffer decoded at load  |
 
@@ -95,7 +95,7 @@ let pattern: String = migemo.query("kensaku");
 
 // Full control
 let migemo = Migemo::builder()
-    .encoding(Encoding::Auto)                 // Auto | Utf8 | Cp932 | EucJp
+    .encoding(Encoding::Utf8)                 // Utf8 | Cp932 | EucJp; unset: detect
     .dictionary_file("migemo-dict")?          // can be repeated (subdicts, -s)
     .dictionary_file("user-dict")?
     .table_file(TableKind::Roma2Hira, "roma2hira.dat")?   // strict
@@ -303,7 +303,9 @@ input get pinned down by golden tests, not guessed.
 
 ### `Encoding` / I/O
 
-- `enum Encoding { Auto, Utf8, Cp932, EucJp }`. With `Auto`, the first
+- `enum Encoding { Utf8, Cp932, EucJp }`: only real encodings, so
+  `Encoding::detect` returns `Option<Encoding>`. "Detect it" is spelled
+  `None` where an encoding is optional. Without one, the first
   dictionary file is detected, and every file after it is read in the same
   encoding (as in C, where `mo->charset` is fixed by the first load). Tables
   loaded before any dictionary are detected on their own.
@@ -322,9 +324,12 @@ input get pinned down by golden tests, not guessed.
   | A1F2 | 8192 | U+FFE1 `￡` | U+00A3 `£` | U+FFE1 `￡` |
   | A2CC | 81CA | U+FFE2 `￢` | U+00AC `¬` | U+FFE2 `￢` |
 
-  So CP932 decodes as everywhere else, but an EUC-JP dictionary yields the
-  right-hand column where the UTF-8 dictionary has the JIS characters. SKK-JISYO.L
-  uses them in 47 entries (for example `kara → 〜`, `c → ¢`).
+  SKK-JISYO.L uses them in 47 entries (for example `kara → 〜`, `c → ¢`).
+  **For EUC-JP, rsmigemo decodes these six codes to the JIS forms** (a fix-up
+  around `encoding_rs`, in both `Encoding::decode` and sdict codes), so an
+  EUC-JP dictionary gives the same characters as the UTF-8 one and as cmigemo
+  on glibc. CP932 keeps the Microsoft forms, as `iconv`'s CP932 does. Making
+  patterns match both forms (`[〜～]`) would be an opt-in for later (#17).
 - `io::open(path)` wraps the file in a `zstd::Decoder` when the path ends in
   `.zst` (feature `zstd`). Text is read whole and then decoded. Dictionaries
   are a few MB, so streaming isn't needed.
@@ -383,7 +388,7 @@ writes patterns to stdout in UTF-8.
 | `--save` sdict file | **byte-identical** to cmigemo's (8,570,159 B) |
 | sdict, C → Rust and Rust → C | identical query output |
 | CP932 text and C-written CP932 sdict | same characters per pattern (order differs, as accepted) |
-| EUC-JP | same, except the six JIS/Microsoft variants (`〜‖−¢£¬`, see *Encoding*) |
+| EUC-JP text | same characters per pattern, 23,314 / 23,314 (order differs, as accepted) |
 | Query speed, 2,028 queries on sdict | 88 ms (C: 84 ms) |
 | Open + query, text dict | 0.21 s (C: 0.05 s): per-word `String` allocations in `DictionaryBuilder` |
 | Open + query, sdict | 22 ms (C: 5 ms): UTF-8 validation plus copying the word buffer |
