@@ -273,12 +273,16 @@ pub struct Syntax {
     pub class_close: Cow<'static, str>, // "]"
     pub newline: Cow<'static, str>,     // ""
     pub escape: EscapeSet,              // r"\.*+^$/"
+    pub class_escape: EscapeSet,        // none
 }
 ```
 The comments give the values of `Syntax::cmigemo()`. There is no `Default`: no
 flavor is an obvious default, so callers name one. `EscapeSet` holds ASCII
 punctuation and space only (a `u128` bit set); letters, digits and control
-characters cannot be escaped.
+characters cannot be escaped. Inside a class, `class_escape` applies instead,
+because flavors differ there: Vim escapes only `\ ] ^ -`, and POSIX ERE and
+Emacs cannot escape at all. Any of `\ ] ^ -` not in `class_escape` is written
+outside the class as its own alternative.
 
 Presets: `Syntax::cmigemo()` (the command's default), `vim()`, `emacs()`, each with
 `.with_newline(bool)` matching `-n`, and `rust_regex()`. The last escapes all
