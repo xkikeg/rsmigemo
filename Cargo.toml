@@ -13,8 +13,11 @@ exclude = ["DESIGN.md", "scripts/"]
 default = ["embedded-tables"]
 # Compile the four conversion tables (roma2hira, hira2kata, han2zen, zen2han) into the library.
 embedded-tables = []
+# Read `.zst`-compressed dictionaries.
+zstd = ["dep:zstd"]
 
 [dependencies]
 encoding_rs = "0.8"
 # `union` keeps a SmallVec of two edges as small as a Vec (24 bytes).
 smallvec = { version = "1", features = ["union"] }
+zstd = { version = "0.13", optional = true }
