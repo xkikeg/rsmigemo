@@ -334,6 +334,16 @@ struct Layout {
     words: String,
 }
 
+/// A node or word-buffer offset as stored: the sdict format holds them in 32
+/// bits.
+///
+/// # Panics
+///
+/// Past `u32::MAX`, that is a dictionary of more than 4 GiB of words.
+pub(super) fn index(n: usize) -> u32 {
+    u32::try_from(n).expect("dictionary too large: offsets must fit in 32 bits")
+}
+
 impl Layout {
     /// Just the root, with room for `words_len` bytes of words.
     fn new(words_len: usize) -> Self {
@@ -353,7 +363,7 @@ impl Layout {
     /// of `group` (sorted), in the sdict layout order: own
     /// words, then the children block, then each child's subtree.
     fn fill(&mut self, id: usize, group: &[(&str, &[String])], depth: usize) {
-        let begin = self.words.len() as u32;
+        let begin = index(self.words.len());
         let rest = match group.first() {
             Some((key, words)) if key.len() == depth => {
                 self.nodes[id].word_idx = begin;
@@ -394,12 +404,12 @@ impl Layout {
             });
             self.spans.push((0, 0));
         }
-        self.nodes[id].start = start as u32;
-        self.nodes[id].end = self.nodes.len() as u32;
+        self.nodes[id].start = index(start);
+        self.nodes[id].end = index(self.nodes.len());
         for (k, &(ch, i, j)) in children.iter().enumerate() {
             self.fill(start + k, &rest[i..j], depth + ch.len_utf8());
         }
-        self.spans[id] = (begin, self.words.len() as u32);
+        self.spans[id] = (begin, index(self.words.len()));
     }
 }
 

@@ -228,8 +228,10 @@ impl ConversionTable {
             Ok(i) => i,
             Err(pos) => {
                 let id = self.nodes.len();
+                // Checked before the push, so a panic leaves `nodes` as it was.
+                let id32 = u32::try_from(id).expect("conversion table: more than u32::MAX nodes");
                 self.nodes.push(Node::new(ch));
-                self.nodes[parent].children.insert(pos, id as u32);
+                self.nodes[parent].children.insert(pos, id32);
                 id
             }
         }

@@ -71,7 +71,9 @@ impl Encoding {
             Err(e) => (&buf[..e.valid_up_to()], true),
         };
         let continuation = valid.iter().filter(|&&c| c & 0xc0 == 0x80).count();
-        let utf8 = (continuation as i32 - i32::from(ufailed)).max(0);
+        // At most 4096, the scanned length.
+        let continuation = i32::try_from(continuation).unwrap_or(i32::MAX);
+        let utf8 = (continuation - i32::from(ufailed)).max(0);
         if euc > sjis && euc > utf8 {
             Some(Encoding::EucJp)
         } else if !ufailed && utf8 > euc && utf8 > sjis {
@@ -136,7 +138,8 @@ impl Encoding {
             Encoding::EucJp => encoding_rs::EUC_JP,
             Encoding::Utf8 => return char::from_u32(code),
         };
-        let buf = [(code >> 8) as u8, code as u8];
+        let [_, _, hi, lo] = code.to_be_bytes();
+        let buf = [hi, lo];
         let bytes = match code {
             0..=0xff => &buf[1..],
             0x100..=0xffff => &buf[..],
@@ -357,7 +360,7 @@ mod tests {
         assert_eq!(Encoding::EucJp.decode_code(0xa4a2), Some('あ'));
         assert_eq!(Encoding::EucJp.decode_code(0xa1c1), Some('〜'));
         assert_eq!(Encoding::Cp932.decode_code(0x8160), Some('～'));
-        assert_eq!(Encoding::Cp932.decode_code(b'a' as u32), Some('a'));
+        assert_eq!(Encoding::Cp932.decode_code(u32::from(b'a')), Some('a'));
         assert_eq!(Encoding::Cp932.decode_code(0xb1), Some('ｱ'));
     }
 

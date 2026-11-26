@@ -24,3 +24,10 @@ regex = { version = "1", optional = true }
 # `union` keeps a SmallVec of two edges as small as a Vec (24 bytes).
 smallvec = { version = "1", features = ["union"] }
 zstd = { version = "0.13", optional = true }
+
+# Narrowing or sign-changing `as` casts must be written as checked conversions.
+[lints.clippy]
+cast_lossless = "warn"
+cast_possible_truncation = "warn"
+cast_possible_wrap = "warn"
+cast_sign_loss = "warn"
