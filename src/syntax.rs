@@ -11,13 +11,13 @@ pub struct Syntax {
     /// Alternation, typically `|`.
     pub or: Cow<'static, str>,
     /// Group start, typically `(`.
-    pub nest_in: Cow<'static, str>,
+    pub group_open: Cow<'static, str>,
     /// Group end, typically `)`.
-    pub nest_out: Cow<'static, str>,
+    pub group_close: Cow<'static, str>,
     /// Character class start, typically `[`.
-    pub select_in: Cow<'static, str>,
+    pub class_open: Cow<'static, str>,
     /// Character class end, typically `]`.
-    pub select_out: Cow<'static, str>,
+    pub class_close: Cow<'static, str>,
     /// Written between the characters of a word, so that a match can run
     /// across a line break. With [`vim()`](Self::vim) it is `\_s*`, and
     /// `あい` becomes `あ\_s*い`. Empty to match within a line only.
@@ -35,10 +35,10 @@ impl Syntax {
     pub fn cmigemo() -> Self {
         Syntax {
             or: "|".into(),
-            nest_in: "(".into(),
-            nest_out: ")".into(),
-            select_in: "[".into(),
-            select_out: "]".into(),
+            group_open: "(".into(),
+            group_close: ")".into(),
+            class_open: "[".into(),
+            class_close: "]".into(),
             newline: "".into(),
             escape: EscapeSet::cmigemo(),
         }
@@ -48,8 +48,8 @@ impl Syntax {
     pub fn vim() -> Self {
         Syntax {
             or: r"\|".into(),
-            nest_in: r"\%(".into(),
-            nest_out: r"\)".into(),
+            group_open: r"\%(".into(),
+            group_close: r"\)".into(),
             newline: r"\_s*".into(),
             ..Syntax::cmigemo()
         }
@@ -59,8 +59,8 @@ impl Syntax {
     pub fn emacs() -> Self {
         Syntax {
             or: r"\|".into(),
-            nest_in: r"\(".into(),
-            nest_out: r"\)".into(),
+            group_open: r"\(".into(),
+            group_close: r"\)".into(),
             newline: r"\s-*".into(),
             ..Syntax::cmigemo()
         }
