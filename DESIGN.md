@@ -252,12 +252,12 @@ One type serves all four `.dat` tables.
 - Children sort by `char`, which is the same order as C's in-order BST walk
   over codes, so the output is byte-identical for UTF-8.
 - `build(&Syntax) -> String` emits each level as follows:
-  1. Emit `nest_in` if `siblings > 1 && any has children`.
-  2. Emit the leaf siblings: one leaf bare, several wrapped in `select_in … select_out`.
+  1. Emit `group_open` if `siblings > 1 && any has children`.
+  2. Emit the leaf siblings: one leaf bare, several wrapped in `class_open … class_close`.
   3. Emit the siblings that have children, joined by `or` (with a leading
      `or` if leaves were emitted). Each is written as char, then `newline`,
      then the child level.
-  4. Emit `nest_out`.
+  4. Emit `group_close`.
   Characters in the escape set (ASCII 32–126 only) get a `\` prefix, including inside `[...]`.
 - It is created fresh for each query, so `Migemo::query` needs only `&self`.
   It uses a `Vec<Node>` arena that is reused within one query.
@@ -266,13 +266,13 @@ One type serves all four `.dat` tables.
 
 ```rust
 pub struct Syntax {
-    pub or: Cow<'static, str>,        // "|"
-    pub nest_in: Cow<'static, str>,   // "("
-    pub nest_out: Cow<'static, str>,  // ")"
-    pub select_in: Cow<'static, str>, // "["
-    pub select_out: Cow<'static, str>,// "]"
-    pub newline: Cow<'static, str>,   // ""
-    pub escape: EscapeSet,            // r"\.*+^$/"
+    pub or: Cow<'static, str>,          // "|"
+    pub group_open: Cow<'static, str>,  // "("
+    pub group_close: Cow<'static, str>, // ")"
+    pub class_open: Cow<'static, str>,  // "["
+    pub class_close: Cow<'static, str>, // "]"
+    pub newline: Cow<'static, str>,     // ""
+    pub escape: EscapeSet,              // r"\.*+^$/"
 }
 ```
 The comments give the values of `Syntax::cmigemo()`. There is no `Default`: no
