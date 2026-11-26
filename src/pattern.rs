@@ -151,14 +151,31 @@ impl PatternBuilder {
         // A leaf ends a word, so it is a single character. A branch is a
         // character followed by a subpattern.
         let is_leaf = |e: &&Edge| self.nodes[e.node.index()].children.is_empty();
-        let leaves = || children.iter().filter(is_leaf);
+        // A leaf goes in the class unless it is special there and the
+        // syntax cannot escape it; then it stands alone, as an alternative
+        // of its own. Only `\ ] ^ -` can stand alone, so `in_class` is
+        // checked before the node lookup in `is_leaf`.
+        let in_class = |e: &&Edge| {
+            !EscapeSet::CLASS_SPECIAL.contains(e.ch) || syntax.class_escape.contains(e.ch)
+        };
+        let class_leaves = || children.iter().filter(is_leaf).filter(in_class);
+        let standalone = || children.iter().filter(|e| !in_class(e)).filter(is_leaf);
         let branches = || children.iter().filter(|e| !is_leaf(e));
-        let leaf_count = leaves().count();
+        // One pass over the children: the root can have thousands.
+        let (mut leaf_count, mut standalone_count) = (0, 0);
+        for e in children {
+            if is_leaf(&e) {
+                leaf_count += 1;
+                standalone_count += usize::from(!in_class(&e));
+            }
+        }
+        let class_count = leaf_count - standalone_count;
         let branch_count = children.len() - leaf_count;
 
-        // A `|` appears at this level only when a branch sits next to another
-        // child. A class alone, or a single branch, needs no group.
-        let needs_group = children.len() > 1 && branch_count > 0;
+        // Every part outside the class (a branch or a standalone leaf) is
+        // joined by `|`: group unless the class holds every child, or there
+        // is only one child.
+        let needs_group = children.len() > 1 && class_count != children.len();
 
         if needs_group {
             out.push_str(&syntax.group_open);
@@ -171,15 +188,23 @@ impl PatternBuilder {
             }
             first = false;
         };
-        if leaf_count > 0 {
+        if class_count > 0 {
             push_or(out);
-            write_class(out, syntax, leaf_count, leaves());
+            write_class(out, syntax, class_count, class_leaves());
         }
-        for e in branches() {
-            push_or(out);
-            write_char(out, syntax.escape, e.ch);
-            out.push_str(&syntax.newline);
-            self.write_level(out, syntax, e.node.index());
+        if standalone_count > 0 {
+            for e in standalone() {
+                push_or(out);
+                write_char(out, syntax.escape, e.ch);
+            }
+        }
+        if branch_count > 0 {
+            for e in branches() {
+                push_or(out);
+                write_char(out, syntax.escape, e.ch);
+                out.push_str(&syntax.newline);
+                self.write_level(out, syntax, e.node.index());
+            }
         }
         if needs_group {
             out.push_str(&syntax.group_close);
@@ -286,18 +311,39 @@ mod tests {
 
     #[test]
     fn class_escapes() {
-        // A class uses `class_escape`: nothing for cmigemo, `\ ] ^ -` for Vim.
         let c = Syntax::cmigemo();
+        // Nothing is escaped in a cmigemo class; `\ ] ^ -` go outside it.
         assert_eq!(build(&["+", "."], &c), "[+.]");
+        assert_eq!(build(&["a", "b", "-"], &c), "([ab]|-)");
+        assert_eq!(build(&["+", "-", "."], &c), "([+.]|-)");
+        assert_eq!(build(&["A", "]"], &c), "(A|])");
+        assert_eq!(build(&["x", "\\"], &c), r"(x|\\)");
+        assert_eq!(build(&["a", "^"], &c), r"(a|\^)");
+        assert_eq!(build(&["-", "^"], &c), r"(-|\^)");
+        assert_eq!(build(&["-"], &c), "-");
+        // Moving `-` out leaves a single leaf, written with the outer escape.
+        assert_eq!(build(&["+", "-"], &c), r"(\+|-)");
+        // A single leaf is not in a class, so the outer escape applies.
+        assert_eq!(build(&["C++", "C#"], &c), r"C(#|\+\+)");
+        assert_eq!(build(&["a."], &Syntax::vim()), r"a\_s*\.");
+        // `[` is literal in a POSIX class.
+        assert_eq!(build(&["[", "a"], &c), "[[a]");
+        // Standalone leaves next to a branch, with and without a class.
+        assert_eq!(build(&["a", "b", "-", "cd"], &c), "([ab]|-|cd)");
+        assert_eq!(build(&["-", "cd"], &c), "(-|cd)");
+        // Japanese next to `-`: `-` sorts first and stays outside.
+        assert_eq!(build(&["-", "ー", "－"], &c), "([ー－]|-)");
+
+        let e = Syntax::emacs();
+        assert_eq!(build(&["a", "b", "-"], &e), r"\([ab]\|-\)");
+
+        // Vim escapes `\ ] ^ -` in a class and nothing else.
         let v = Syntax::vim();
         assert_eq!(build(&["+", "-", "."], &v), r"[+\-.]");
         assert_eq!(build(&["a", "]", "^", "\\"], &v), r"[\\\]\^a]");
-        // A single leaf is not in a class, so the outer escape applies.
-        assert_eq!(build(&["C++", "C#"], &c), r"C(#|\+\+)");
-        assert_eq!(build(&["a."], &v), r"a\_s*\.");
 
         let mut s = Syntax::cmigemo();
         s.class_escape = EscapeSet::new("+-");
-        assert_eq!(build(&["+", "-", "."], &s), r"[\+\-.]");
+        assert_eq!(build(&["+", "-", "]"], &s), r"([\+\-]|])");
     }
 }
