@@ -84,3 +84,17 @@ jobs:
     steps:
       - id: deploy
         uses: actions/deploy-pages@v5
+
+  deny:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        checks: [advisories, bans licenses sources]
+    # A new RustSec advisory shouldn't block unrelated PRs; it still shows as
+    # a failed job.
+    continue-on-error: ${{ matrix.checks == 'advisories' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@81891abc19297b21343b15ef67dc61e4aea74fda # v2.1.4
+        with:
+          command: check ${{ matrix.checks }}
