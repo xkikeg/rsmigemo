@@ -15,9 +15,12 @@ default = ["embedded-tables"]
 embedded-tables = []
 # Read `.zst`-compressed dictionaries.
 zstd = ["dep:zstd"]
+# `Migemo::regex()`, returning a compiled `regex::Regex`.
+regex = ["dep:regex"]
 
 [dependencies]
 encoding_rs = "0.8"
+regex = { version = "1", optional = true }
 # `union` keeps a SmallVec of two edges as small as a Vec (24 bytes).
 smallvec = { version = "1", features = ["union"] }
 zstd = { version = "0.13", optional = true }

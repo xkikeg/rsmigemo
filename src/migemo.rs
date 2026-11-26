@@ -83,6 +83,13 @@ impl Migemo {
         out
     }
 
+    /// Compile the pattern for `query` with the [`regex`] crate. This uses
+    /// [`Syntax::rust_regex`], whatever this instance's syntax is.
+    #[cfg(feature = "regex")]
+    pub fn regex(&self, query: &str) -> Result<regex::Regex, regex::Error> {
+        regex::Regex::new(&self.query_with(query, &Syntax::rust_regex()))
+    }
+
     /// The syntax used by [`query`](Self::query).
     pub fn syntax(&self) -> &Syntax {
         &self.syntax
