@@ -15,6 +15,7 @@ own terms; look here for the correspondence.
 |-----------------|-------------------------------------------|
 | `encoding.rs`   | `charset.c` (`charset_detect_buf`)        |
 | `syntax.rs`     | `migemo_set_operator`, `migemo_set_escape_chars` in `migemo.c` |
+| `pattern.rs`    | `rxgen.c`; its tests are from `test/rxgen.c` |
 
 ## Differences
 
