@@ -48,6 +48,16 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - run: cargo test ${{ matrix.features != 'default' && matrix.features || '' }}
 
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: taiki-e/install-action@893d6ee8d714b6c7dfe2bcd94e5759e9a7958a7e # v2.90.10
+        with:
+          tool: cargo-msrv@0.19.6
+      # Checks package.rust-version with that toolchain (installed by rustup).
+      - run: cargo msrv verify -- cargo check --all-features --all-targets
+
   doc:
     runs-on: ubuntu-latest
     steps:
