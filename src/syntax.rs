@@ -22,13 +22,26 @@ pub struct Syntax {
     /// across a line break. With [`vim()`](Self::vim) it is `\_s*`, and
     /// `あい` becomes `あ\_s*い`. Empty to match within a line only.
     pub newline: Cow<'static, str>,
-    /// Characters written with a `\` in front.
+    /// Characters written with a `\` in front, outside character classes.
     pub escape: EscapeSet,
+    /// Characters written with a `\` in front inside a character class.
+    ///
+    /// Flavors differ here: Vim escapes only [`EscapeSet::CLASS_SPECIAL`]
+    /// inside a class, and POSIX ERE and Emacs cannot escape at all, because a
+    /// `\` there is literal. A character of [`EscapeSet::CLASS_SPECIAL`] that
+    /// is not in this set is written outside the class, as an alternative of
+    /// its own: `a`, `b` and `-` become `([ab]|-)`.
+    pub class_escape: EscapeSet,
 }
 
 impl Syntax {
     /// The syntax of the `cmigemo` command with no options: `|`, `(…)`,
     /// `[…]`, no newline pattern, and [`EscapeSet::cmigemo()`].
+    ///
+    /// Nothing is escaped inside a class, so [`EscapeSet::CLASS_SPECIAL`]
+    /// characters go outside it. That makes classes valid both in POSIX ERE,
+    /// where a `\` in a class is literal, and in Perl-style flavors. cmigemo
+    /// escapes classes like the rest of the pattern, which breaks both.
     ///
     /// It is close to POSIX ERE but is not a standard flavor; pick the
     /// preset that matches your regex engine.
@@ -41,21 +54,29 @@ impl Syntax {
             class_close: "]".into(),
             newline: "".into(),
             escape: EscapeSet::cmigemo(),
+            class_escape: EscapeSet::NONE,
         }
     }
 
     /// Vim, as `cmigemo -v`: `\|`, `\%(…\)`, and `\_s*` between characters.
+    ///
+    /// Inside a class only [`EscapeSet::CLASS_SPECIAL`] is escaped: Vim keeps
+    /// the `\` of any other `\x` there as a literal backslash.
     pub fn vim() -> Self {
         Syntax {
             or: r"\|".into(),
             group_open: r"\%(".into(),
             group_close: r"\)".into(),
             newline: r"\_s*".into(),
+            class_escape: EscapeSet::CLASS_SPECIAL,
             ..Syntax::cmigemo()
         }
     }
 
     /// Emacs, as `cmigemo -e`: `\|`, `\(…\)`, and `\s-*` between characters.
+    ///
+    /// A `\` in an Emacs class is literal, so nothing is escaped there and
+    /// [`EscapeSet::CLASS_SPECIAL`] characters go outside the class.
     pub fn emacs() -> Self {
         Syntax {
             or: r"\|".into(),
@@ -91,6 +112,15 @@ pub struct EscapeSet(u128);
 impl EscapeSet {
     /// Escape nothing.
     pub const NONE: EscapeSet = EscapeSet(0);
+
+    /// The characters that can change the meaning of a character class:
+    /// `\ ] ^ -`.
+    ///
+    /// `[` is not among them: it is literal in a POSIX or Emacs class, and the
+    /// characters that would make it special there (`[:`, `[.`, `[=`) sort
+    /// before it, so they never follow it. Flavors with nested classes, such
+    /// as the `regex` crate, escape it in [`Syntax::class_escape`].
+    pub const CLASS_SPECIAL: EscapeSet = EscapeSet::new(r"\]^-");
 
     /// The characters of `chars`; anything but ASCII punctuation and `' '` is
     /// ignored.
@@ -146,6 +176,17 @@ mod tests {
         assert!(!set.contains('\n'));
         assert!(!set.contains('あ'));
         assert_eq!(EscapeSet::NONE, EscapeSet::new("abc\n"));
+    }
+
+    #[test]
+    fn class_special() {
+        assert_eq!(
+            format!("{:?}", EscapeSet::CLASS_SPECIAL),
+            r#"EscapeSet("-\\]^")"#
+        );
+        assert_eq!(Syntax::vim().class_escape, EscapeSet::CLASS_SPECIAL);
+        assert_eq!(Syntax::cmigemo().class_escape, EscapeSet::NONE);
+        assert_eq!(Syntax::emacs().class_escape, EscapeSet::NONE);
     }
 
     #[test]
