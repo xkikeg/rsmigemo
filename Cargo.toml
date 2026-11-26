@@ -11,4 +11,5 @@ exclude = ["DESIGN.md", "scripts/"]
 
 [dependencies]
 encoding_rs = "0.8"
-smallvec = "1"
+# `union` keeps a SmallVec of two edges as small as a Vec (24 bytes).
+smallvec = { version = "1", features = ["union"] }
