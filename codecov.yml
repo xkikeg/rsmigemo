@@ -1,0 +1,9 @@
+# Coverage is reported on PRs but never blocks a merge.
+coverage:
+  status:
+    project:
+      default:
+        informational: true
+    patch:
+      default:
+        informational: true
