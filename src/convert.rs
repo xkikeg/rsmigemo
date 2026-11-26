@@ -3,8 +3,9 @@
 use std::path::Path;
 
 use crate::ctype::is_space;
-use crate::encoding::{self, Encoding};
+use crate::encoding;
 use crate::error::{Error, ParseErrorKind, Result};
+use crate::options::LoadOptions;
 
 /// Which of the four standard conversion tables.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -114,7 +115,16 @@ impl ConversionTable {
 
     /// Parse a table in `.dat` format.
     pub fn parse(text: &str) -> Result<Self> {
-        let (table, error) = Self::parse_partial(text);
+        Self::parse_with(text, false)
+    }
+
+    /// [`parse`](Self::parse), and with `strict` an entry that can never
+    /// apply is an error: a key defined twice, or a key whose prefix is
+    /// already defined. A key that removes earlier, longer keys is still
+    /// accepted: the standard `roma2hira.dat` defines `mma` … `mmo` and then
+    /// `mm`.
+    pub(crate) fn parse_with(text: &str, strict: bool) -> Result<Self> {
+        let (table, error) = Self::parse_partial_with(text, strict);
         match error {
             Some(e) => Err(e),
             None => Ok(table),
@@ -124,10 +134,17 @@ impl ConversionTable {
     /// Parse up to the first malformed line, returning the entries before it
     /// along with the error. Lenient loading reads tables this way.
     pub(crate) fn parse_partial(text: &str) -> (Self, Option<Error>) {
+        Self::parse_partial_with(text, false)
+    }
+
+    fn parse_partial_with(text: &str, strict: bool) -> (Self, Option<Error>) {
         let mut table = Self::new();
         for (i, line) in text.lines().enumerate() {
             let result = parse_line(line).and_then(|entry| match entry {
-                Some(e) => table.insert(e.key, e.value, e.remain),
+                Some(e) => match table.insert_entry(e.key, e.value, e.remain)? {
+                    Inserted::Unreachable if strict => Err(ParseErrorKind::UnreachableEntry),
+                    _ => Ok(()),
+                },
                 None => Ok(()),
             });
             if let Err(kind) = result {
@@ -137,12 +154,15 @@ impl ConversionTable {
         (table, None)
     }
 
-    /// Read and parse a `.dat` file. With `None`, the encoding is detected.
-    pub fn from_file(path: impl AsRef<Path>, encoding: Option<Encoding>) -> Result<Self> {
-        let path = path.as_ref();
+    /// Read and parse a `.dat` file. With no encoding in `options`, it is
+    /// detected.
+    pub fn from_file(path: impl AsRef<Path>, options: impl Into<LoadOptions>) -> Result<Self> {
+        let (path, options) = (path.as_ref(), options.into());
         let bytes = crate::io::read_file(path)?;
-        let text = encoding::resolve(encoding, &bytes).decode(&bytes);
-        Self::parse(&text).map_err(|e| e.with_path(path))
+        let text = encoding::resolve(options.encoding, &bytes)
+            .decode_with(&bytes, options.strict)
+            .map_err(|e| e.with_path(path))?;
+        Self::parse_with(&text, options.strict).map_err(|e| e.with_path(path))
     }
 
     /// Add an entry. The first key wins: if `key` or a prefix of it
@@ -162,6 +182,15 @@ impl ConversionTable {
         value: &str,
         remain: Option<&str>,
     ) -> std::result::Result<(), ParseErrorKind> {
+        self.insert_entry(key, value, remain).map(|_| ())
+    }
+
+    fn insert_entry(
+        &mut self,
+        key: &str,
+        value: &str,
+        remain: Option<&str>,
+    ) -> std::result::Result<Inserted, ParseErrorKind> {
         if remain.is_some_and(|r| r.chars().count() >= key.chars().count()) {
             return Err(ParseErrorKind::RemainNotShorter);
         }
@@ -169,18 +198,19 @@ impl ConversionTable {
         for ch in key.chars() {
             let next = self.dig(cur, ch);
             if self.nodes[next].value.is_some() {
-                return Ok(()); // `key` or a prefix of it is already defined
+                // `key` or a prefix of it is already defined.
+                return Ok(Inserted::Unreachable);
             }
             cur = next;
         }
         if cur == 0 {
-            return Ok(()); // empty key
+            return Ok(Inserted::Unreachable); // empty key
         }
         let node = &mut self.nodes[cur];
         node.children.clear();
         node.value = Some(value.into());
         node.remain = remain.map(Into::into);
-        Ok(())
+        Ok(Inserted::Added)
     }
 
     /// The child of `parent` for `ch`: `Ok(index into nodes)`, or
@@ -272,6 +302,13 @@ impl ConversionTable {
             self.complete(child, prefix, out);
         }
     }
+}
+
+/// What [`ConversionTable::insert_entry`] did with an entry.
+enum Inserted {
+    Added,
+    /// Ignored: the key or a prefix of it was already defined.
+    Unreachable,
 }
 
 /// A parsed `.dat` line.
@@ -402,6 +439,34 @@ mod tests {
         let t = ConversionTable::parse("a\tあ\n").unwrap();
         check(&t, "x1a", &["x1あ"]);
         assert!(ConversionTable::new().convert_all("ka").is_empty());
+    }
+
+    #[test]
+    fn strict_rejects_unreachable_entries() {
+        for (text, line) in [("a\tX\na\tY\n", 2), ("a\tX\nab\tY\n", 2)] {
+            assert!(ConversionTable::parse(text).is_ok(), "{text:?}");
+            let err = ConversionTable::parse_with(text, true).unwrap_err();
+            assert!(
+                matches!(err, Error::Parse { line: l, kind: ParseErrorKind::UnreachableEntry, .. } if l == line),
+                "{text:?}: {err}"
+            );
+        }
+        // A shorter key removing longer ones is fine, as in roma2hira.dat.
+        ConversionTable::parse_with("mma\tっま\nmm\tっ\tm\n", true).unwrap();
+    }
+
+    #[cfg(feature = "embedded-tables")]
+    #[test]
+    fn embedded_tables_are_strictly_valid() {
+        for kind in TableKind::ALL {
+            let text = match kind {
+                TableKind::Roma2Hira => include_str!("../data/roma2hira.dat"),
+                TableKind::Hira2Kata => include_str!("../data/hira2kata.dat"),
+                TableKind::Han2Zen => include_str!("../data/han2zen.dat"),
+                TableKind::Zen2Han => include_str!("../data/zen2han.dat"),
+            };
+            ConversionTable::parse_with(text, true).unwrap();
+        }
     }
 
     #[test]

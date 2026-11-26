@@ -2,14 +2,17 @@
 
 use std::borrow::Cow;
 
+use crate::error::{Error, Result};
+
 /// How many leading bytes [`Encoding::detect`] inspects.
 const DETECT_LEN: usize = 4096;
 
 /// The character encoding of a dictionary or conversion-table file.
 ///
 /// Everything is decoded to UTF-8 on load, so this only matters for reading
-/// files. Patterns are always returned as UTF-8 [`String`]s. Loaders take an
-/// `Option<Encoding>`, where `None` means "detect it" (see [`detect`](Self::detect)).
+/// files. Patterns are always returned as UTF-8 [`String`]s. Loaders take a
+/// [`LoadOptions`](crate::LoadOptions), whose encoding is `None` to detect it
+/// (see [`detect`](Self::detect)); an `Encoding` converts into one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum Encoding {
@@ -88,7 +91,40 @@ impl Encoding {
                 String::from_utf8_lossy(bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(bytes))
             }
             Encoding::Cp932 => encoding_rs::SHIFT_JIS.decode_without_bom_handling(bytes).0,
-            Encoding::EucJp => decode_euc_jp(bytes),
+            Encoding::EucJp => match decode_euc_jp(bytes, euc_jp_lenient) {
+                Ok(text) => text,
+                Err(_) => unreachable!("lenient decoding can't fail"),
+            },
+        }
+    }
+
+    /// Like [`decode`](Self::decode), but fail with [`Error::Decode`] at the
+    /// first malformed sequence instead of replacing it.
+    pub fn decode_strict(self, bytes: &[u8]) -> Result<Cow<'_, str>> {
+        let at = |offset| Error::Decode { path: None, offset };
+        match self {
+            Encoding::Utf8 => {
+                let bom = if bytes.starts_with(b"\xEF\xBB\xBF") {
+                    3
+                } else {
+                    0
+                };
+                std::str::from_utf8(&bytes[bom..])
+                    .map(Cow::Borrowed)
+                    .map_err(|e| at(bom + e.valid_up_to()))
+            }
+            Encoding::Cp932 => strict(encoding_rs::SHIFT_JIS, bytes).map_err(at),
+            Encoding::EucJp => decode_euc_jp(bytes, euc_jp_strict).map_err(at),
+        }
+    }
+
+    /// [`decode_strict`](Self::decode_strict) if `strict`, else
+    /// [`decode`](Self::decode).
+    pub(crate) fn decode_with(self, bytes: &[u8], strict: bool) -> Result<Cow<'_, str>> {
+        if strict {
+            self.decode_strict(bytes)
+        } else {
+            Ok(self.decode(bytes))
         }
     }
 
@@ -159,13 +195,53 @@ fn euc_jp_jis_form(code: [u8; 2]) -> Option<char> {
         .map(|&(_, ch)| ch)
 }
 
+/// A decoder for the pieces of [`decode_euc_jp`]: the text, or the offset of
+/// the first malformed sequence.
+type Piece = fn(&[u8]) -> Result<Cow<'_, str>, usize>;
+
+fn euc_jp_lenient(bytes: &[u8]) -> Result<Cow<'_, str>, usize> {
+    Ok(encoding_rs::EUC_JP.decode_without_bom_handling(bytes).0)
+}
+
+fn euc_jp_strict(bytes: &[u8]) -> Result<Cow<'_, str>, usize> {
+    strict(encoding_rs::EUC_JP, bytes)
+}
+
+/// Decode without replacement, or return the offset of the first malformed
+/// sequence.
+fn strict<'a>(
+    encoding: &'static encoding_rs::Encoding,
+    bytes: &'a [u8],
+) -> Result<Cow<'a, str>, usize> {
+    if let Some(text) = encoding.decode_without_bom_handling_and_without_replacement(bytes) {
+        return Ok(text);
+    }
+    // Only the offset is needed: decode into a small buffer that is
+    // overwritten, rather than allocating room for the whole file.
+    let mut decoder = encoding.new_decoder_without_bom_handling();
+    let mut scratch = [0u8; 4096];
+    let mut read = 0;
+    loop {
+        let (result, n, _) =
+            decoder.decode_to_utf8_without_replacement(&bytes[read..], &mut scratch, true);
+        read += n;
+        match result {
+            encoding_rs::DecoderResult::OutputFull => {}
+            encoding_rs::DecoderResult::Malformed(bad, extra) => {
+                return Err(read - usize::from(bad) - usize::from(extra));
+            }
+            // Not reached: the input is malformed.
+            encoding_rs::DecoderResult::InputEmpty => return Err(read),
+        }
+    }
+}
+
 /// Decode EUC-JP with `encoding_rs`, except for [`EUC_JP_JIS_FORMS`].
 ///
 /// The input is split at those two-byte codes, found by walking character
 /// boundaries (so a trail byte or a JIS X 0212 code is never mistaken for
-/// one), and the pieces between them are decoded normally.
-fn decode_euc_jp(bytes: &[u8]) -> Cow<'_, str> {
-    let decode = |b| encoding_rs::EUC_JP.decode_without_bom_handling(b).0;
+/// one), and the pieces between them are decoded with `piece`.
+fn decode_euc_jp(bytes: &[u8], piece: Piece) -> Result<Cow<'_, str>, usize> {
     let mut out = String::new();
     let mut start = 0;
     let mut i = 0;
@@ -178,17 +254,17 @@ fn decode_euc_jp(bytes: &[u8]) -> Cow<'_, str> {
         if let Some(&[lead, trail]) = bytes.get(i..i + 2)
             && let Some(ch) = euc_jp_jis_form([lead, trail])
         {
-            out.push_str(&decode(&bytes[start..i]));
+            out.push_str(&piece(&bytes[start..i]).map_err(|e| start + e)?);
             out.push(ch);
             start = i + 2;
         }
         i += len;
     }
     if start == 0 {
-        return decode(bytes);
+        return piece(bytes);
     }
-    out.push_str(&decode(&bytes[start..]));
-    Cow::Owned(out)
+    out.push_str(&piece(&bytes[start..]).map_err(|e| start + e)?);
+    Ok(Cow::Owned(out))
 }
 
 #[cfg(test)]
@@ -283,6 +359,44 @@ mod tests {
         assert_eq!(Encoding::Cp932.decode_code(0x8160), Some('～'));
         assert_eq!(Encoding::Cp932.decode_code(b'a' as u32), Some('a'));
         assert_eq!(Encoding::Cp932.decode_code(0xb1), Some('ｱ'));
+    }
+
+    impl Encoding {
+        /// UTF-8 `bytes` re-encoded in this encoding.
+        fn encode_for_test(self, bytes: &[u8]) -> Vec<u8> {
+            let text = std::str::from_utf8(bytes).unwrap();
+            match self {
+                Encoding::Cp932 => encoding_rs::SHIFT_JIS.encode(text).0.into_owned(),
+                Encoding::EucJp => encoding_rs::EUC_JP.encode(text).0.into_owned(),
+                Encoding::Utf8 => bytes.to_vec(),
+            }
+        }
+    }
+
+    #[test]
+    fn decode_strict() {
+        let offset = |enc: Encoding, bytes: &[u8]| match enc.decode_strict(bytes) {
+            Err(Error::Decode { offset, .. }) => Some(offset),
+            Ok(_) => None,
+            Err(e) => panic!("{e}"),
+        };
+        assert_eq!(offset(Encoding::Utf8, b"ab\xFFc"), Some(2));
+        assert_eq!(offset(Encoding::Utf8, b"\xEF\xBB\xBFa\xFF"), Some(4));
+        assert_eq!(offset(Encoding::Utf8, "あい".as_bytes()), None);
+        assert_eq!(offset(Encoding::Cp932, b"\x82\xA0a\x81"), Some(3));
+        // Past the 4 KiB scratch buffer, with multi-byte text before it.
+        let mut long = "あ".repeat(5000).into_bytes();
+        long = Encoding::Cp932.encode_for_test(&long);
+        let at = long.len();
+        long.extend_from_slice(b"a\x81");
+        assert_eq!(offset(Encoding::Cp932, &long), Some(at + 1));
+        assert_eq!(offset(Encoding::EucJp, b"\xA4\xA2\xA1\xC1a\xFF"), Some(5));
+        assert_eq!(offset(Encoding::EucJp, b"\xA1\xC1\xA4\xA2"), None);
+        assert_eq!(Encoding::EucJp.decode_strict(b"\xA1\xC1").unwrap(), "〜");
+        assert_eq!(
+            Encoding::Utf8.decode_strict(b"\xEF\xBB\xBFabc").unwrap(),
+            "abc"
+        );
     }
 
     #[test]

@@ -42,6 +42,11 @@ struct RawNode {
 }
 
 pub(super) fn read(bytes: &[u8]) -> Result<(Dictionary, Encoding)> {
+    read_with(bytes, false)
+}
+
+/// Read an sdict, with the extra checks of `LoadOptions::strict` if `strict`.
+pub(super) fn read_with(bytes: &[u8], strict: bool) -> Result<(Dictionary, Encoding)> {
     if bytes.len() < HEADER_LEN {
         return Err(invalid("truncated header"));
     }
@@ -106,78 +111,98 @@ pub(super) fn read(bytes: &[u8]) -> Result<(Dictionary, Encoding)> {
         }
     }
 
-    let dict = match direct(&raw, buf, encoding) {
-        Some(dict) => dict,
-        None => rebuild(&raw, buf, encoding)?,
+    if strict {
+        if bytes.len() > total {
+            return Err(invalid("trailing data after the words"));
+        }
+        if has_parent.iter().skip(1).any(|&p| !p) {
+            return Err(invalid("node not reachable from the root"));
+        }
+    }
+    // Searchable as is: the spans of every subtree, or why not.
+    let layout = subtree_spans(&raw, buf, encoding);
+    if strict && let Err(reason) = layout {
+        return Err(invalid(reason));
+    }
+    // Offsets count from the start of the file.
+    let malformed = |offset| Error::Decode {
+        path: None,
+        offset: nodes_end + offset,
+    };
+    let words = match encoding {
+        Encoding::Utf8 => match std::str::from_utf8(buf) {
+            Ok(words) => Some(words),
+            Err(e) if strict => return Err(malformed(e.valid_up_to())),
+            Err(_) => None,
+        },
+        Encoding::Cp932 | Encoding::EucJp => {
+            if strict {
+                encoding.decode_strict(buf).map_err(|e| match e {
+                    Error::Decode { offset, .. } => malformed(offset),
+                    e => e,
+                })?;
+            }
+            None
+        }
+    };
+    let dict = match (layout, words) {
+        (Ok(spans), Some(words)) => direct(&raw, words, spans),
+        _ => rebuild(&raw, buf, encoding)?,
     };
     Ok((dict, encoding))
 }
 
-/// Use the file's layout as is. Works for any UTF-8 sdict written by cmigemo
-/// or by us; returns `None` if the layout is not one we can search directly.
-fn direct(raw: &[RawNode], buf: &[u8], encoding: Encoding) -> Option<Dictionary> {
-    if encoding != Encoding::Utf8 {
-        return None;
-    }
-    let words = std::str::from_utf8(buf).ok()?;
-    let nodes = raw
+/// Each subtree's words as one contiguous range of `buf` (own words, then
+/// each child's range in order), which is what [`Dictionary`] searches. The
+/// reason if the file is not laid out that way, as cmigemo's writer and ours
+/// always lay it out.
+fn subtree_spans(
+    raw: &[RawNode],
+    buf: &[u8],
+    encoding: Encoding,
+) -> std::result::Result<Vec<(u32, u32)>, &'static str> {
+    if raw[1..]
         .iter()
-        .enumerate()
-        .map(
-            |(
-                i,
-                &RawNode {
-                    code,
-                    start,
-                    end,
-                    word_idx,
-                },
-            )| {
-                let ch = if i == 0 { '\0' } else { char::from_u32(code)? };
-                Some(Node {
-                    ch,
-                    start,
-                    end,
-                    word_idx,
-                })
-            },
-        )
-        .collect::<Option<Vec<_>>>()?;
-    let sorted = nodes.iter().all(|n| {
-        nodes[n.start as usize..n.end as usize]
+        .any(|n| encoding.decode_code(n.code).is_none())
+    {
+        return Err("invalid character code");
+    }
+    let sorted = raw.iter().all(|n| {
+        raw[n.start as usize..n.end as usize]
             .windows(2)
-            .all(|w| w[0].ch < w[1].ch)
+            .all(|w| w[0].code < w[1].code)
     });
     if !sorted {
-        return None;
+        return Err("children not sorted");
     }
-
-    // Each subtree's words must be one contiguous range: own words, then each
-    // child's range in order. Children have larger indices, so go backwards.
-    let mut spans = vec![(0u32, 0u32); nodes.len()];
-    for i in (0..nodes.len()).rev() {
-        let node = nodes[i];
+    let not_depth_first = "word lists not in depth-first order";
+    // Children have larger indices, so go backwards.
+    let mut spans = vec![(0u32, 0u32); raw.len()];
+    for i in (0..raw.len()).rev() {
+        let node = raw[i];
         let mut span: Option<(u32, u32)> = None;
-        let mut extend = |(b, e): (u32, u32)| -> Option<()> {
+        let mut extend = |(b, e): (u32, u32)| {
             if b == e {
-                return Some(());
+                return Ok(());
             }
             span = match span {
                 None => Some((b, e)),
                 Some((sb, se)) if se == b => Some((sb, e)),
-                Some(_) => return None,
+                Some(_) => return Err(not_depth_first),
             };
-            Some(())
+            Ok(())
         };
         if node.word_idx != NONE {
             let w = node.word_idx as usize;
-            if !words.is_char_boundary(w) {
-                return None; // would split a character when sliced
+            // A UTF-8 continuation byte: slicing here would split a character.
+            if encoding == Encoding::Utf8 && buf[w] & 0xc0 == 0x80 {
+                return Err("word offset inside a character");
             }
             let own_end = if buf[w] == 0 {
                 w + 1
             } else {
-                w + buf[w..].windows(2).position(|p| p == [0, 0])? + 2
+                let end = buf[w..].windows(2).position(|p| p == [0, 0]);
+                w + end.ok_or("word list not terminated")? + 2
             };
             extend((w as u32, own_end as u32))?;
         }
@@ -186,11 +211,31 @@ fn direct(raw: &[RawNode], buf: &[u8], encoding: Encoding) -> Option<Dictionary>
         }
         spans[i] = span.unwrap_or((0, 0));
     }
-    Some(Dictionary {
+    Ok(spans)
+}
+
+/// Search the file's layout as is: UTF-8 `words`, laid out as `spans` says.
+fn direct(raw: &[RawNode], words: &str, spans: Vec<(u32, u32)>) -> Dictionary {
+    let nodes = raw
+        .iter()
+        .enumerate()
+        .map(|(i, n)| Node {
+            // Checked by `subtree_spans`.
+            ch: if i == 0 {
+                '\0'
+            } else {
+                char::from_u32(n.code).unwrap_or('\u{FFFD}')
+            },
+            start: n.start,
+            end: n.end,
+            word_idx: n.word_idx,
+        })
+        .collect();
+    Dictionary {
         nodes,
         spans,
         words: words.to_owned(),
-    })
+    }
 }
 
 /// Read every entry and lay the dictionary out afresh. Used for legacy
@@ -344,6 +389,96 @@ mod tests {
         let raw = [node('\0', 1, 2, NONE), node('a', 2, 2, 1)];
         let (d, _) = read(&sdict_bytes(&raw, "あ\0\0".as_bytes(), ENCODING_UTF8)).unwrap();
         assert!(d.lookup("a").all(|w| !w.is_empty()));
+    }
+
+    #[test]
+    fn strict_accepts_canonical_files() {
+        let golden: &[u8] = include_bytes!("../../tests/data/migemo-sdict");
+        read_with(golden, true).unwrap();
+        let mut bytes = Vec::new();
+        sample().write_sdict(&mut bytes).unwrap();
+        read_with(&bytes, true).unwrap();
+    }
+
+    #[test]
+    fn strict_rejects_what_lenient_repairs() {
+        // Each file loads leniently but fails strictly.
+        let cases: [(&str, Vec<RawNode>, &[u8]); 7] = [
+            (
+                "children not sorted",
+                vec![
+                    node('\0', 1, 3, NONE),
+                    node('い', 3, 3, 0),
+                    node('あ', 3, 3, 2),
+                ],
+                b"x\0\0y\0\0",
+            ),
+            (
+                "depth-first",
+                vec![
+                    node('\0', 1, 3, NONE),
+                    node('あ', 3, 3, 3),
+                    node('い', 3, 3, 0),
+                ],
+                b"y\0\0x\0\0",
+            ),
+            (
+                "reachable",
+                vec![
+                    node('\0', 1, 2, NONE),
+                    node('あ', 3, 3, 0),
+                    node('い', 3, 3, NONE),
+                ],
+                b"x\0\0",
+            ),
+            (
+                "character code",
+                vec![
+                    node('\0', 1, 2, NONE),
+                    RawNode {
+                        code: 0xD800,
+                        start: 2,
+                        end: 2,
+                        word_idx: 0,
+                    },
+                ],
+                b"x\0\0",
+            ),
+            (
+                "inside a character",
+                vec![node('\0', 1, 2, NONE), node('a', 2, 2, 1)],
+                "あ\0\0".as_bytes(),
+            ),
+            (
+                "not terminated",
+                vec![node('\0', 1, 2, NONE), node('a', 2, 2, 0)],
+                b"x",
+            ),
+            (
+                "malformed text at byte",
+                vec![node('\0', 1, 2, NONE), node('あ', 2, 2, 0)],
+                b"\xFF\0\0",
+            ),
+        ];
+        for (want, raw, words) in cases {
+            let bytes = sdict_bytes(&raw, words, ENCODING_UTF8);
+            assert!(read(&bytes).is_ok(), "{want}: lenient");
+            let err = read_with(&bytes, true).unwrap_err();
+            assert!(err.to_string().contains(want), "{want}: {err}");
+        }
+        // The offset of malformed text counts from the start of the file.
+        let raw = [node('\0', 1, 2, NONE), node('あ', 2, 2, 0)];
+        let bytes = sdict_bytes(&raw, b"a\xFF\0\0", ENCODING_UTF8);
+        match read_with(&bytes, true) {
+            Err(Error::Decode { offset, .. }) => assert_eq!(offset, HEADER_LEN + 2 * NODE_LEN + 1),
+            other => panic!("{other:?}"),
+        }
+        // Bytes after the words are ignored, except in strict mode.
+        let mut bytes = sdict_bytes(&raw, b"x\0\0", ENCODING_UTF8);
+        bytes.push(0);
+        assert!(read(&bytes).is_ok());
+        let err = read_with(&bytes, true).unwrap_err();
+        assert!(err.to_string().contains("trailing"), "{err}");
     }
 
     #[test]

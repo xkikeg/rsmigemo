@@ -6,6 +6,7 @@ use crate::convert::{ConversionTable, TableKind};
 use crate::dict::{Dictionary, DictionaryBuilder};
 use crate::encoding::{self, Encoding};
 use crate::error::Result;
+use crate::options::LoadOptions;
 use crate::pattern::PatternBuilder;
 use crate::syntax::Syntax;
 
@@ -177,6 +178,7 @@ pub struct MigemoBuilder {
     /// When no encoding is set: the encoding the first dictionary file was
     /// detected as, used for every file after it.
     detected: Option<Encoding>,
+    strict: bool,
     dict: DictState,
     tables: [Option<ConversionTable>; 4],
     syntax: Syntax,
@@ -187,6 +189,7 @@ impl Default for MigemoBuilder {
         MigemoBuilder {
             encoding: None,
             detected: None,
+            strict: false,
             dict: DictState::None,
             tables: Default::default(),
             syntax: Syntax::cmigemo(),
@@ -211,22 +214,33 @@ impl MigemoBuilder {
         self
     }
 
-    fn file_encoding(&self) -> Option<Encoding> {
-        self.encoding.or(self.detected)
+    /// Load files from now on strictly or not; see [`LoadOptions::strict`].
+    /// Strict loading also makes [`sibling_tables`](Self::sibling_tables)
+    /// fail on a malformed table. [`Migemo::open`] is always lenient.
+    pub fn strict(mut self, strict: bool) -> Self {
+        self.strict = strict;
+        self
+    }
+
+    fn file_options(&self) -> LoadOptions {
+        LoadOptions {
+            encoding: self.encoding.or(self.detected),
+            strict: self.strict,
+        }
     }
 
     /// Load a dictionary file, text or static. Repeat to merge several
     /// dictionaries.
     pub fn dictionary_file(mut self, path: impl AsRef<Path>) -> Result<Self> {
-        let (path, encoding) = (path.as_ref(), self.file_encoding());
+        let (path, options) = (path.as_ref(), self.file_options());
         let detected = if let DictState::None = self.dict {
-            let (dict, detected) = Dictionary::open_detect(path, encoding)?;
+            let (dict, detected) = Dictionary::open_detect(path, options)?;
             self.dict = DictState::Built(dict);
             detected
         } else {
             // Merging: read straight into the builder rather than building a
             // trie only to unpack it again.
-            self.builder().add_file_detect(path, encoding)?
+            self.builder().add_file_detect(path, options)?
         };
         self.detected.get_or_insert(detected);
         Ok(self)
@@ -264,13 +278,14 @@ impl MigemoBuilder {
 
     /// Load a conversion table file.
     pub fn table_file(self, kind: TableKind, path: impl AsRef<Path>) -> Result<Self> {
-        let table = ConversionTable::from_file(path, self.file_encoding())?;
+        let table = ConversionTable::from_file(path, self.file_options())?;
         Ok(self.table(kind, table))
     }
 
     /// Load the conversion tables found next to `dict_path`, the way
     /// [`Migemo::open`] does: missing files are skipped, and a malformed
-    /// table keeps the entries before the bad line.
+    /// table keeps the entries before the bad line. With
+    /// [`strict`](Self::strict), a malformed table is an error instead.
     pub fn sibling_tables(mut self, dict_path: impl AsRef<Path>) -> Result<Self> {
         let dir = dict_path
             .as_ref()
@@ -279,12 +294,17 @@ impl MigemoBuilder {
         let dir = dir.unwrap_or(Path::new("."));
         for kind in TableKind::ALL {
             let file = dir.join(kind.file_name());
-            if file.is_file() {
-                let bytes = crate::io::read_file(&file)?;
-                let text = encoding::resolve(self.file_encoding(), &bytes).decode(&bytes);
-                let (table, _ignored) = ConversionTable::parse_partial(&text);
-                self = self.table(kind, table);
+            if !file.is_file() {
+                continue;
             }
+            let table = if self.strict {
+                ConversionTable::from_file(&file, self.file_options())?
+            } else {
+                let bytes = crate::io::read_file(&file)?;
+                let text = encoding::resolve(self.file_options().encoding, &bytes).decode(&bytes);
+                ConversionTable::parse_partial(&text).0
+            };
+            self = self.table(kind, table);
         }
         Ok(self)
     }

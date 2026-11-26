@@ -4,7 +4,7 @@ use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use rsmigemo::{Dictionary, Migemo, Syntax};
+use rsmigemo::{Dictionary, LoadOptions, Migemo, Syntax};
 
 const DICT_FILENAME: &str = "migemo-dict";
 
@@ -34,6 +34,7 @@ struct Options {
     rust: bool,
     no_newline: bool,
     quiet: bool,
+    strict: bool,
 }
 
 fn usage() -> String {
@@ -51,6 +52,7 @@ OPTIONS:
      --save <dict>      Save the dictionary as a static dictionary (sdict).
      --sdict <dict>     Load <dict> as static dictionary (sdict)
                         (conflicts with -d/s/u and --save)
+     --strict           Reject malformed files instead of repairing them.
   -q --quiet            Show no message except results.
   -v --vim              Use vim style regexp.
   -e --emacs            Use emacs style regexp.
@@ -78,6 +80,7 @@ fn parse_args() -> Result<Options, String> {
             "-r" | "--rust" => opts.rust = true,
             "-n" | "--nonewline" => opts.no_newline = true,
             "-q" | "--quiet" => opts.quiet = true,
+            "--strict" => opts.strict = true,
             "--convert" => {}
             "-d" | "--dict" => opts.dict = Some(value(&arg)?.into()),
             "-s" | "--subdict" | "-u" | "--userdict" => opts.subdicts.push(value(&arg)?.into()),
@@ -121,9 +124,10 @@ fn open(opts: &Options) -> Result<Migemo, String> {
         Some(path) => path.clone(),
         None => default_dict().ok_or("failed to load default dictionaries")?,
     };
-    let mut builder = Migemo::builder();
+    let mut builder = Migemo::builder().strict(opts.strict);
     builder = if opts.sdict.is_some() {
-        builder.dictionary(Dictionary::open_sdict(&main).map_err(|e| e.to_string())?)
+        let dict = Dictionary::open_sdict(&main, LoadOptions::default().strict(opts.strict));
+        builder.dictionary(dict.map_err(|e| e.to_string())?)
     } else {
         builder.dictionary_file(&main).map_err(|e| e.to_string())?
     };

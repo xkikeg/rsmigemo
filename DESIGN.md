@@ -49,7 +49,8 @@ All the internal structures work on `char` and `str`.
   siblings sort by Unicode scalar rather than by the legacy code. Callers who
   need legacy bytes re-encode the `String`. **This is accepted.**
 - Invalid byte sequences, which cmigemo passes through as raw codes, are not
-  representable. They are replaced with U+FFFD (see *Encoding / I/O*).
+  representable. They are replaced with U+FFFD, or rejected with strict
+  loading (see *Strict loading*).
 
 ## Crate layout
 
@@ -97,6 +98,7 @@ let pattern: String = migemo.query("kensaku");
 // Full control
 let migemo = Migemo::builder()
     .encoding(Encoding::Utf8)                 // Utf8 | Cp932 | EucJp; unset: detect
+    .strict(false)                            // default; see Strict loading
     .dictionary_file("migemo-dict")?          // can be repeated (subdicts, -s)
     .dictionary_file("user-dict")?
     .table_file(TableKind::Roma2Hira, "roma2hira.dat")?   // strict
@@ -108,6 +110,12 @@ let migemo = Migemo::builder()
 // Static dictionary (sdict)
 migemo.dictionary().write_sdict(File::create("out.sdict")?)?;
 let dict = Dictionary::from_sdict(&std::fs::read("out.sdict")?)?;
+
+// Lower-level loaders take `impl Into<LoadOptions>`; an Encoding, or None to
+// detect it, loads leniently.
+let dict = Dictionary::open("migemo-dict", None)?;
+let dict = Dictionary::open("migemo-dict", Encoding::Utf8)?;
+let dict = Dictionary::open("migemo-dict", LoadOptions::new().strict(true))?;
 
 // Per-call syntax override; optional compiled regex
 let p = migemo.query_with("aka", &Syntax::rust_regex());
@@ -126,6 +134,7 @@ let p = migemo.query_with("aka", &Syntax::rust_regex());
 | `ConversionTable`            | `romaji` (used for all 4 tables)                                |
 | `PatternBuilder`             | `rxgen`                                                         |
 | `Encoding`                   | `CHARSET_*`, `charset_detect_file`                              |
+| `LoadOptions`                | (none: encoding plus strict loading)                            |
 | `Error`                      | `NULL` / 0 return codes                                         |
 
 What is dropped or reshaped:
@@ -329,8 +338,9 @@ input get pinned down by golden tests, not guessed.
   dictionary file is detected, and every file after it is read in the same
   encoding (as in C, where `mo->charset` is fixed by the first load). Tables
   loaded before any dictionary are detected on their own.
-- Decoding is always lossy (U+FFFD). cmigemo passes invalid bytes through,
-  so failing outright would be a regression.
+- Decoding is lossy (U+FFFD) by default. cmigemo passes invalid bytes
+  through, so failing outright would be a regression. Strict loading fails
+  instead (*Strict loading*).
 - `encoding_rs` follows WHATWG, which decodes EUC-JP with the Microsoft
   (CP932) mapping for six JIS X 0208 characters. glibc `iconv` uses the JIS
   mapping, as does the UTF-8 dictionary cmigemo builds:
@@ -364,6 +374,7 @@ pub enum Error {
     Io { path: PathBuf, source: io::Error },
     Parse { path: Option<PathBuf>, line: usize, kind: ParseErrorKind }, // MissingValue | MissingTab
     InvalidSdict { path: Option<PathBuf>, reason: &'static str },      // magic / truncation / ranges
+    Decode { path: Option<PathBuf>, offset: usize },                   // strict loading only
     UnsupportedCompression { path: PathBuf },
 }
 ```
@@ -374,7 +385,37 @@ The sdict reader validates every range: children must come after their
 parent, and no node may be shared. A hostile file therefore can't cause an
 infinite or exponential traversal. A file whose layout isn't searchable as is
 (legacy charset, unsorted children, words not contiguous) is laid out again
-through `DictionaryBuilder` instead of being rejected.
+through `DictionaryBuilder` instead of being rejected, unless loading is
+strict.
+
+### Strict loading
+
+Lenient is the default, and accepts whatever cmigemo accepts.
+`LoadOptions::strict`, `MigemoBuilder::strict` and `rsmigemo --strict` turn
+each silent repair into an error:
+
+| Lenient (default, as cmigemo)                         | Strict                                  |
+|-------------------------------------------------------|-----------------------------------------|
+| invalid bytes for the encoding → U+FFFD               | `Error::Decode { offset }` (file offset) |
+| sdict with an unknown charset → read as UTF-8         | `InvalidSdict`                          |
+| sdict character code invalid in its charset → U+FFFD  | `InvalidSdict`                          |
+| sdict children unsorted → rebuilt                     | `InvalidSdict`                          |
+| sdict word lists not in depth-first order → rebuilt   | `InvalidSdict`                          |
+| sdict node unreachable from the root → ignored        | `InvalidSdict`                          |
+| malformed sibling `.dat` → keep lines before it       | `Error::Parse`                          |
+
+Strict rejects only what no cmigemo-compatible writer produces. A legacy
+charset sdict is valid cmigemo output, so it is still decoded and rebuilt.
+Every dictionary cmigemo builds from SKK-JISYO.L (UTF-8, CP932 and EUC-JP;
+text and sdict) loads strictly. Malformed lines in text dictionaries, and in
+tables loaded with `table_file` / `ConversionTable::from_file`, are errors in
+both modes. `Migemo::open` is always lenient.
+
+The API takes `impl Into<LoadOptions>` wherever it took an `Encoding`
+(`Dictionary::open`, `DictionaryBuilder::add_file`,
+`ConversionTable::from_file`), so an `Encoding` still works and means
+lenient. In-memory input has `Dictionary::from_sdict_strict` and
+`Encoding::decode_strict`.
 
 ## CLI (`rsmigemo`, `src/main.rs`)
 
@@ -421,6 +462,8 @@ writes patterns to stdout in UTF-8.
   it, so there is no `to_owned`.
 - Reuse the `PatternBuilder` arena between queries (thread-local).
 - A `criterion` benchmark suite.
+- Opt-in matching of both JIS and Microsoft forms (`[〜～]` …) in patterns
+  (#17).
 
 ## Licensing / data
 
