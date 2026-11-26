@@ -29,8 +29,12 @@ pub struct PatternBuilder {
 
 #[derive(Debug, Clone, Default)]
 struct Node {
-    /// Sorted by `ch`. Most nodes have two children or fewer, so those are
-    /// kept inline.
+    /// Sorted by `ch`.
+    //
+    // Two inline edges cover 95% of the nodes in patterns built from the
+    // standard dictionary (63% have none, 29% one, 3% two), and two are free:
+    // with smallvec's `union` feature, `SmallVec<[Edge; 2]>` is 24 bytes, the
+    // size of a `Vec`. Each further inline edge adds 8 bytes to every node.
     children: SmallVec<[Edge; 2]>,
 }
 
@@ -276,6 +280,12 @@ mod tests {
             build(&["ab", "c"], &Syntax::emacs().without_newline()),
             r"\(c\|ab\)"
         );
+    }
+
+    #[cfg(target_pointer_width = "64")]
+    #[test]
+    fn node_is_as_small_as_a_vec() {
+        assert_eq!(size_of::<Node>(), size_of::<Vec<Edge>>());
     }
 
     #[test]
