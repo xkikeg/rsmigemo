@@ -63,7 +63,7 @@ jobs:
           cargo doc --no-deps --all-features --lib --document-private-items
           --target-dir target/internal-doc
         env:
-          RUSTDOCFLAGS: -D warnings --html-before-content ${{ github.workspace }}/.github/pages/internal-banner.html
+          RUSTDOCFLAGS: -D warnings --html-in-header ${{ github.workspace }}/.github/pages/internal-docs.html
       - if: github.event_name == 'push'
         run: cp .github/pages/index.html target/internal-doc/doc/
       - if: github.event_name == 'push'
