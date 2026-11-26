@@ -35,6 +35,41 @@ pub enum ParseErrorKind {
     MissingValue,
     /// A dictionary line has a key but no tab-separated words.
     MissingTab,
+    /// A conversion-table `REMAIN` is not shorter than its key, so
+    /// converting could loop forever.
+    RemainNotShorter,
+}
+
+impl Error {
+    /// An [`Error::Io`] for `path`.
+    pub(crate) fn io(path: impl Into<PathBuf>, source: io::Error) -> Self {
+        Error::Io {
+            path: path.into(),
+            source,
+        }
+    }
+
+    /// An [`Error::Parse`] for in-memory text; [`with_path`](Self::with_path)
+    /// adds the file once it is known.
+    pub(crate) fn parse(line: usize, kind: ParseErrorKind) -> Self {
+        Error::Parse {
+            path: None,
+            line,
+            kind,
+        }
+    }
+
+    /// Attach `path` to an error produced while parsing in-memory data.
+    /// The path is converted only if the error has none yet.
+    pub(crate) fn with_path(mut self, file: impl Into<PathBuf>) -> Self {
+        if let Error::Parse {
+            path: path @ None, ..
+        } = &mut self
+        {
+            *path = Some(file.into());
+        }
+        self
+    }
 }
 
 impl fmt::Display for ParseErrorKind {
@@ -42,6 +77,7 @@ impl fmt::Display for ParseErrorKind {
         f.write_str(match self {
             ParseErrorKind::MissingValue => "key has no value",
             ParseErrorKind::MissingTab => "key has no tab-separated words",
+            ParseErrorKind::RemainNotShorter => "remain is not shorter than the key",
         })
     }
 }
