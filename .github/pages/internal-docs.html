@@ -1,0 +1,13 @@
+<!-- Marks the internal docs (published from main) as such. Pure CSS, so the
+     note sits at the top of the content column on every page. -->
+<style>
+#main-content::before {
+  content: "Internal documentation: built from main with private items. Private items are not public API; see docs.rs for the released API.";
+  display: block;
+  margin-bottom: 1em;
+  padding: 0.4em 0.8em;
+  border-left: 3px solid var(--warning-border-color);
+  background: var(--code-block-background-color);
+  font-size: 0.875rem;
+}
+</style>
