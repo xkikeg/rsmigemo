@@ -6,6 +6,8 @@
 
 mod encoding;
 mod error;
+mod syntax;
 
 pub use encoding::Encoding;
 pub use error::{Error, ParseErrorKind, Result};
+pub use syntax::{EscapeSet, Syntax};

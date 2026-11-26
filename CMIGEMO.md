@@ -14,6 +14,7 @@ own terms; look here for the correspondence.
 | rsmigemo        | cmigemo                                   |
 |-----------------|-------------------------------------------|
 | `encoding.rs`   | `charset.c` (`charset_detect_buf`)        |
+| `syntax.rs`     | `migemo_set_operator`, `migemo_set_escape_chars` in `migemo.c` |
 
 ## Differences
 

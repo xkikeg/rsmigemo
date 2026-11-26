@@ -272,10 +272,15 @@ pub struct Syntax {
     pub select_in: Cow<'static, str>, // "["
     pub select_out: Cow<'static, str>,// "]"
     pub newline: Cow<'static, str>,   // ""
-    pub escape: EscapeSet,            // default "\\.*+^$/"
+    pub escape: EscapeSet,            // r"\.*+^$/"
 }
 ```
-Presets: `Syntax::default()` (cmigemo default), `vim()`, `emacs()`, each with
+The comments give the values of `Syntax::cmigemo()`. There is no `Default`: no
+flavor is an obvious default, so callers name one. `EscapeSet` holds ASCII
+punctuation and space only (a `u128` bit set); letters, digits and control
+characters cannot be escaped.
+
+Presets: `Syntax::cmigemo()` (the command's default), `vim()`, `emacs()`, each with
 `.with_newline(bool)` matching `-n`, and `rust_regex()`. The last escapes all
 regex metacharacters (`\.+*?()|[]{}^$#&-~`), so the result is always valid
 for the `regex` crate. cmigemo's default leaves `?|()[]{}` in dictionary words
