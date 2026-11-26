@@ -41,8 +41,9 @@ rsmigemo decodes each input file to UTF-8 once, when it is loaded:
 All the internal structures work on `char` and `str`.
 
 **Consequences**
-- UTF-8 dictionaries produce byte-identical output. This is the default
-  everywhere except Windows.
+- UTF-8 dictionaries produce byte-identical output, except for character
+  classes that contain ASCII symbols (see `PatternBuilder` below). This is
+  the default everywhere except Windows.
 - CP932/EUC-JP dictionaries produce an *equivalent* regex in UTF-8, but the
   order of characters inside `[...]` and of `|` branches can differ, because
   siblings sort by Unicode scalar rather than by the legacy code. Callers who
@@ -251,16 +252,22 @@ One type serves all four `.dat` tables.
   no-op. Adding `赤` after `赤ちゃん` cuts the subtree. The final trie is
   therefore the set of minimal words, independent of insertion order.
 - Children sort by `char`, which is the same order as C's in-order BST walk
-  over codes, so the output is byte-identical for UTF-8.
-- `build(&Syntax) -> String` emits each level as follows:
-  1. Emit `group_open` if `siblings > 1 && any has children`.
-  2. Emit the leaf siblings: one leaf bare, several wrapped in
+  over codes, so the output is byte-identical for UTF-8 (classes aside).
+- `build(&Syntax) -> String` emits each level as follows. The parts are:
+  the class (if any leaf goes in it), each leaf that cannot go in it, and
+  each sibling that has children.
+  1. Emit `group_open` if a part other than the class sits next to another
+     child.
+  2. Emit the class leaves: one bare, several wrapped in
      `class_open … class_close`. Inside, `class_escape` applies.
-  3. Emit the siblings that have children, joined by `or` (with a leading
-     `or` if leaves were emitted). Each is written as char, then `newline`,
-     then the child level.
-  4. Emit `group_close`.
-  Outside classes, characters in `escape` get a `\` prefix.
+  3. Emit each leaf of `\ ] ^ -` that `class_escape` lacks, on its own.
+     Flavors like POSIX ERE and Emacs cannot escape these inside a class.
+  4. Emit the siblings that have children. Each is written as char, then
+     `newline`, then the child level.
+  5. Emit `group_close`.
+  Parts are joined by `or`. Outside classes, characters in `escape` get a
+  `\` prefix. cmigemo escapes classes with the same set as the rest, so
+  `[\+-\.]` is a range and `[A]]` a class followed by `]`.
 - It is created fresh for each query, so `Migemo::query` needs only `&self`.
   It uses a `Vec<Node>` arena that is reused within one query.
 
@@ -395,7 +402,7 @@ writes patterns to stdout in UTF-8.
 
 | Check | Result |
 |---|---|
-| UTF-8, default / `-v` / `-e` / `-v -n` / `-e -n` | 23,314 / 23,314 identical, all five |
+| UTF-8, default / `-v` / `-e` / `-v -n` / `-e -n` | 23,293 (21 differ) / 23,294 (20) / 23,293 (21) / 23,294 (20) / 23,293 (21) of 23,314 identical. Every difference is the class fix: `[\.…]` → `[.…]`, `[\/…]` → `[/…]`, and `\` moved out of a class except with Vim |
 | `--save` sdict file | **byte-identical** to cmigemo's (8,570,159 B) |
 | sdict, C → Rust and Rust → C | identical query output |
 | CP932 text and C-written CP932 sdict | same characters per pattern (order differs, as accepted) |

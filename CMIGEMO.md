@@ -27,3 +27,10 @@ own terms; look here for the correspondence.
 - **EUC-JP.** Six JIS X 0208 codes (`〜‖−¢£¬`) decode to their JIS forms,
   as with glibc `iconv`, not to the Microsoft forms the WHATWG decoder uses.
   cmigemo converts nothing: it matches the bytes as they are.
+- **Character classes.** cmigemo escapes inside `[…]` with the same set as
+  outside, which breaks some classes: `+ - .` give `[\+-\.]`, a range that
+  also matches `,`, and in POSIX ERE, Emacs and Vim the `\` adds a literal
+  backslash. rsmigemo has a separate `Syntax::class_escape`. With the
+  default and Emacs syntax nothing is escaped in a class and `\ ] ^ -` are
+  written outside it (`([+.]|-)`). With Vim only `\ ] ^ -` are escaped
+  (`[+\-.]`). Patterns without ASCII symbols in a class are the same.
