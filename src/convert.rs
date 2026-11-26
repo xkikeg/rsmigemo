@@ -37,6 +37,10 @@ impl TableKind {
             TableKind::Zen2Han => "zen2han.dat",
         }
     }
+
+    pub(crate) const fn index(self) -> usize {
+        self as usize
+    }
 }
 
 /// A prefix table that rewrites strings, such as `kya` → `きゃ`.

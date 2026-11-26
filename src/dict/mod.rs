@@ -233,16 +233,27 @@ impl DictionaryBuilder {
         path: impl AsRef<Path>,
         encoding: Option<Encoding>,
     ) -> Result<&mut Self> {
-        let path = path.as_ref();
+        self.add_file_detect(path.as_ref(), encoding)?;
+        Ok(self)
+    }
+
+    /// Like [`add_from_file`](Self::add_from_file), returning the encoding
+    /// the file was read in.
+    pub(crate) fn add_file_detect(
+        &mut self,
+        path: &Path,
+        encoding: Option<Encoding>,
+    ) -> Result<Encoding> {
         let bytes = crate::io::read_file(path)?;
         if sdict::is_sdict(&bytes) {
-            let (dict, _) = sdict::read(&bytes).map_err(|e| e.with_path(path))?;
+            let (dict, encoding) = sdict::read(&bytes).map_err(|e| e.with_path(path))?;
             self.add_dictionary(&dict);
-        } else {
-            let text = encoding::resolve(encoding, &bytes).decode(&bytes);
-            self.add_from_text(&text).map_err(|e| e.with_path(path))?;
+            return Ok(encoding);
         }
-        Ok(self)
+        let encoding = encoding::resolve(encoding, &bytes);
+        self.add_from_text(&encoding.decode(&bytes))
+            .map_err(|e| e.with_path(path))?;
+        Ok(encoding)
     }
 
     /// Add every entry of an existing dictionary.
