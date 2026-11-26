@@ -214,11 +214,12 @@ reader is hand-written too, using fixed-size little-endian reads with
 Every dictionary hit passes through `PatternBuilder::add`, so it must be cheap:
 - Nodes live in a `Vec<Node>` arena that is cleared and reused between
   segments, so it allocates nothing once it has warmed up.
-- Each node's children are a sorted `SmallVec<(char, u32)>`: a linear scan
-  while short, binary search once long. The root level is the one that gets
-  wide.
-- A word stops being added at the first node already marked `wordtail`
-  (shorter-wins), which ends most long words early.
+- Each node's children are edges `{ ch: char, node: u32 }` in a
+  `SmallVec<[Edge; 2]>` sorted by `ch` and binary searched. The root level
+  is the one that gets wide (up to a few thousand children).
+- A node with no children ends a word, so no flag is stored. A word stops
+  being added at the first such node (shorter-wins), which ends most long
+  words early.
 
 ### `ConversionTable` (≙ `romaji.c`)
 
@@ -253,12 +254,13 @@ One type serves all four `.dat` tables.
   over codes, so the output is byte-identical for UTF-8.
 - `build(&Syntax) -> String` emits each level as follows:
   1. Emit `group_open` if `siblings > 1 && any has children`.
-  2. Emit the leaf siblings: one leaf bare, several wrapped in `class_open … class_close`.
+  2. Emit the leaf siblings: one leaf bare, several wrapped in
+     `class_open … class_close`. Inside, `class_escape` applies.
   3. Emit the siblings that have children, joined by `or` (with a leading
      `or` if leaves were emitted). Each is written as char, then `newline`,
      then the child level.
   4. Emit `group_close`.
-  Characters in the escape set (ASCII 32–126 only) get a `\` prefix, including inside `[...]`.
+  Outside classes, characters in `escape` get a `\` prefix.
 - It is created fresh for each query, so `Migemo::query` needs only `&self`.
   It uses a `Vec<Node>` arena that is reused within one query.
 

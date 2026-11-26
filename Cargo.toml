@@ -11,3 +11,4 @@ exclude = ["DESIGN.md", "scripts/"]
 
 [dependencies]
 encoding_rs = "0.8"
+smallvec = "1"
