@@ -20,8 +20,9 @@ own terms; look here for the correspondence.
 | `dict/sdict.rs` | `stree.c` |
 | `dict/text.rs`  | `mtree_load` in `mtree.c` |
 | `io.rs`         | `ioreader_*.c` |
-| `main.rs`       | `src/main.c` (the `cmigemo` command); `-r/--rust` is new |
+| `main.rs`       | `src/main.c` (the `cmigemo` command); `-r/--rust` and `--strict` are new |
 | `migemo.rs`     | `migemo.c`; `tests/migemo.rs` is from `test/migemo.c` |
+| `options.rs`    | (none: strict loading is new) |
 | `pattern.rs`    | `rxgen.c`; its tests are from `test/rxgen.c` |
 
 ## Differences
@@ -45,6 +46,9 @@ own terms; look here for the correspondence.
   or the line is an error (lenient loading keeps the lines before it). Such
   a rule (`a x a`) makes cmigemo loop forever on a query. Every rule in the
   standard tables shrinks.
+- **Strict loading.** `LoadOptions::strict` and `--strict` reject invalid
+  bytes and malformed static dictionaries. cmigemo has no such mode; the
+  default, lenient loading accepts what cmigemo accepts.
 - **sdict byte order.** rsmigemo reads and writes little-endian. cmigemo
   uses the native byte order, which is little-endian on every platform it
   ships on, so the files are the same.

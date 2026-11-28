@@ -9,6 +9,7 @@ use std::path::Path;
 
 use crate::encoding::{self, Encoding};
 use crate::error::Result;
+use crate::options::LoadOptions;
 
 /// `word_idx` of a node with no words of its own.
 const NONE: u32 = u32::MAX;
@@ -72,21 +73,25 @@ impl Dictionary {
     }
 
     /// Load a dictionary file, either migemo-dict text or a static dictionary
-    /// (detected by its `MGS1` header). `encoding` applies to text files and
-    /// is detected with `None`; static dictionaries record their own.
-    pub fn open(path: impl AsRef<Path>, encoding: Option<Encoding>) -> Result<Self> {
-        Ok(Self::open_detect(path.as_ref(), encoding)?.0)
+    /// (detected by its `MGS1` header). The encoding in `options` applies to
+    /// text files and is detected if unset; static dictionaries record their
+    /// own.
+    pub fn open(path: impl AsRef<Path>, options: impl Into<LoadOptions>) -> Result<Self> {
+        Ok(Self::open_detect(path.as_ref(), options.into())?.0)
     }
 
     /// Like [`open`](Self::open), also returning the encoding the file was
     /// read in.
-    pub(crate) fn open_detect(path: &Path, encoding: Option<Encoding>) -> Result<(Self, Encoding)> {
+    pub(crate) fn open_detect(path: &Path, options: LoadOptions) -> Result<(Self, Encoding)> {
         let bytes = crate::io::read_file(path)?;
         if sdict::is_sdict(&bytes) {
-            return sdict::read(&bytes).map_err(|e| e.with_path(path));
+            return sdict::read_with(&bytes, options.strict).map_err(|e| e.with_path(path));
         }
-        let encoding = encoding::resolve(encoding, &bytes);
-        let dict = Self::parse(&encoding.decode(&bytes)).map_err(|e| e.with_path(path))?;
+        let encoding = encoding::resolve(options.encoding, &bytes);
+        let text = encoding
+            .decode_with(&bytes, options.strict)
+            .map_err(|e| e.with_path(path))?;
+        let dict = Self::parse(&text).map_err(|e| e.with_path(path))?;
         Ok((dict, encoding))
     }
 
@@ -95,13 +100,22 @@ impl Dictionary {
         Ok(sdict::read(bytes)?.0)
     }
 
+    /// Like [`from_sdict`](Self::from_sdict), with the checks of
+    /// [`LoadOptions::strict`].
+    pub fn from_sdict_strict(bytes: &[u8]) -> Result<Self> {
+        Ok(sdict::read_with(bytes, true)?.0)
+    }
+
     /// Load a static dictionary (sdict) file, which may be `.zst`
     /// compressed. Unlike [`open`](Self::open), a text dictionary is an
-    /// error.
-    pub fn open_sdict(path: impl AsRef<Path>) -> Result<Self> {
+    /// error. Only [`LoadOptions::strict`] applies: an sdict records its own
+    /// encoding.
+    pub fn open_sdict(path: impl AsRef<Path>, options: impl Into<LoadOptions>) -> Result<Self> {
         let path = path.as_ref();
         let bytes = crate::io::read_file(path)?;
-        Self::from_sdict(&bytes).map_err(|e| e.with_path(path))
+        let (dict, _) =
+            sdict::read_with(&bytes, options.into().strict).map_err(|e| e.with_path(path))?;
+        Ok(dict)
     }
 
     /// Write this dictionary in cmigemo's static dictionary (sdict) format,
@@ -235,14 +249,14 @@ impl DictionaryBuilder {
         Ok(self)
     }
 
-    /// Add every entry of a dictionary file (text or static). With `None`,
-    /// the encoding of a text file is detected from the contents.
+    /// Add every entry of a dictionary file (text or static). The encoding
+    /// of a text file is detected if `options` doesn't set one.
     pub fn add_from_file(
         &mut self,
         path: impl AsRef<Path>,
-        encoding: Option<Encoding>,
+        options: impl Into<LoadOptions>,
     ) -> Result<&mut Self> {
-        self.add_file_detect(path.as_ref(), encoding)?;
+        self.add_file_detect(path.as_ref(), options.into())?;
         Ok(self)
     }
 
@@ -251,17 +265,20 @@ impl DictionaryBuilder {
     pub(crate) fn add_file_detect(
         &mut self,
         path: &Path,
-        encoding: Option<Encoding>,
+        options: LoadOptions,
     ) -> Result<Encoding> {
         let bytes = crate::io::read_file(path)?;
         if sdict::is_sdict(&bytes) {
-            let (dict, encoding) = sdict::read(&bytes).map_err(|e| e.with_path(path))?;
+            let (dict, encoding) =
+                sdict::read_with(&bytes, options.strict).map_err(|e| e.with_path(path))?;
             self.add_dictionary(&dict);
             return Ok(encoding);
         }
-        let encoding = encoding::resolve(encoding, &bytes);
-        self.add_from_text(&encoding.decode(&bytes))
+        let encoding = encoding::resolve(options.encoding, &bytes);
+        let text = encoding
+            .decode_with(&bytes, options.strict)
             .map_err(|e| e.with_path(path))?;
+        self.add_from_text(&text).map_err(|e| e.with_path(path))?;
         Ok(encoding)
     }
 

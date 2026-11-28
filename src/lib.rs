@@ -35,6 +35,7 @@ mod encoding;
 mod error;
 mod io;
 mod migemo;
+mod options;
 mod pattern;
 mod syntax;
 
@@ -43,5 +44,6 @@ pub use dict::{Dictionary, DictionaryBuilder, Words};
 pub use encoding::Encoding;
 pub use error::{Error, ParseErrorKind, Result};
 pub use migemo::{Migemo, MigemoBuilder};
+pub use options::LoadOptions;
 pub use pattern::PatternBuilder;
 pub use syntax::{EscapeSet, Syntax};

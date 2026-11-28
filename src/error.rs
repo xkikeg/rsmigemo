@@ -32,6 +32,15 @@ pub enum Error {
         /// What was wrong with it.
         reason: &'static str,
     },
+    /// Bytes that are not valid in the file's encoding. Only returned by
+    /// strict loading ([`LoadOptions::strict`](crate::LoadOptions::strict));
+    /// lenient loading replaces them with U+FFFD.
+    Decode {
+        /// The file, if the data came from one.
+        path: Option<PathBuf>,
+        /// Byte offset of the first malformed sequence.
+        offset: usize,
+    },
     /// The file is `.zst`-compressed but the `zstd` feature is disabled.
     UnsupportedCompression {
         /// The compressed file.
@@ -50,6 +59,10 @@ pub enum ParseErrorKind {
     /// A conversion-table `REMAIN` is not shorter than its key, so
     /// converting could loop forever.
     RemainNotShorter,
+    /// A conversion-table entry that can never apply, because the same key
+    /// or a prefix of it was defined earlier. Only strict loading reports
+    /// it.
+    UnreachableEntry,
 }
 
 impl Error {
@@ -80,6 +93,9 @@ impl Error {
             }
             | Error::InvalidSdict {
                 path: path @ None, ..
+            }
+            | Error::Decode {
+                path: path @ None, ..
             } => *path = Some(file.into()),
             _ => {}
         }
@@ -93,6 +109,7 @@ impl fmt::Display for ParseErrorKind {
             ParseErrorKind::MissingValue => "key has no value",
             ParseErrorKind::MissingTab => "key has no tab-separated words",
             ParseErrorKind::RemainNotShorter => "remain is not shorter than the key",
+            ParseErrorKind::UnreachableEntry => "the key or a prefix of it is already defined",
         })
     }
 }
@@ -108,6 +125,10 @@ impl fmt::Display for Error {
             Error::InvalidSdict { path, reason } => match path {
                 Some(path) => write!(f, "{}: invalid static dictionary: {reason}", path.display()),
                 None => write!(f, "invalid static dictionary: {reason}"),
+            },
+            Error::Decode { path, offset } => match path {
+                Some(path) => write!(f, "{}: malformed text at byte {offset}", path.display()),
+                None => write!(f, "malformed text at byte {offset}"),
             },
             Error::UnsupportedCompression { path } => write!(
                 f,

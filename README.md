@@ -40,7 +40,8 @@ $ cargo run --release -- -d path/to/migemo-dict --save migemo-sdict -w a
 $ echo nihongo | cargo run --release -- --sdict migemo-sdict -q -v
 ```
 
-The flags are the same as `cmigemo`'s, plus `-r/--rust` for `regex`-crate syntax.
+The flags are the same as `cmigemo`'s, plus `-r/--rust` for `regex`-crate syntax
+and `--strict` to reject malformed files instead of repairing them.
 
 ## License
 
