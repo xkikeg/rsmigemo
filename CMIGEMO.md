@@ -20,6 +20,7 @@ own terms; look here for the correspondence.
 | `dict/sdict.rs` | `stree.c` |
 | `dict/text.rs`  | `mtree_load` in `mtree.c` |
 | `io.rs`         | `ioreader_*.c` |
+| `migemo.rs`     | `migemo.c`; `tests/migemo.rs` is from `test/migemo.c` |
 | `pattern.rs`    | `rxgen.c`; its tests are from `test/rxgen.c` |
 
 ## Differences
