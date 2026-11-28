@@ -4,11 +4,15 @@
 
 #![warn(missing_docs)]
 
+mod convert;
+mod ctype;
 mod encoding;
 mod error;
+mod io;
 mod pattern;
 mod syntax;
 
+pub use convert::{ConversionTable, TableKind};
 pub use encoding::Encoding;
 pub use error::{Error, ParseErrorKind, Result};
 pub use pattern::PatternBuilder;

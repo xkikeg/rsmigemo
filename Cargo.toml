@@ -9,6 +9,11 @@ keywords = ["migemo", "japanese", "romaji", "regex", "search"]
 categories = ["text-processing", "internationalization"]
 exclude = ["DESIGN.md", "scripts/"]
 
+[features]
+default = ["embedded-tables"]
+# Compile the four conversion tables (roma2hira, hira2kata, han2zen, zen2han) into the library.
+embedded-tables = []
+
 [dependencies]
 encoding_rs = "0.8"
 # `union` keeps a SmallVec of two edges as small as a Vec (24 bytes).

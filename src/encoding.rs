@@ -93,6 +93,14 @@ impl Encoding {
     }
 }
 
+/// The encoding to read `bytes` in: `encoding` if given, otherwise the
+/// detected one, falling back to UTF-8.
+pub(crate) fn resolve(encoding: Option<Encoding>, bytes: &[u8]) -> Encoding {
+    encoding
+        .or_else(|| Encoding::detect(bytes))
+        .unwrap_or(Encoding::Utf8)
+}
+
 /// EUC-JP codes that the WHATWG decoder (and so `encoding_rs`) maps to their
 /// Microsoft (CP932) forms, with the JIS X 0208 characters that glibc `iconv`
 /// and cmigemo's UTF-8 dictionary use instead.
@@ -217,6 +225,14 @@ mod tests {
         // CP932 keeps the Microsoft forms, as iconv's CP932 does.
         assert_eq!(Encoding::Cp932.decode(b"\x81\x60"), "～");
         assert_eq!(Encoding::EucJp.decode(b"plain \xA4\xA2"), "plain あ");
+    }
+
+    #[test]
+    fn resolve() {
+        let sjis = encoding_rs::SHIFT_JIS.encode("あか\t赤").0;
+        assert_eq!(super::resolve(None, &sjis), Encoding::Cp932);
+        assert_eq!(super::resolve(Some(Encoding::Utf8), &sjis), Encoding::Utf8);
+        assert_eq!(super::resolve(None, b"ascii"), Encoding::Utf8);
     }
 
     #[test]

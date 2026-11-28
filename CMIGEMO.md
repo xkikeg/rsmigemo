@@ -15,6 +15,8 @@ own terms; look here for the correspondence.
 |-----------------|-------------------------------------------|
 | `encoding.rs`   | `charset.c` (`charset_detect_buf`)        |
 | `syntax.rs`     | `migemo_set_operator`, `migemo_set_escape_chars` in `migemo.c` |
+| `convert.rs`    | `romaji.c`; its tests are from `test/romaji.c` |
+| `io.rs`         | `ioreader_*.c` |
 | `pattern.rs`    | `rxgen.c`; its tests are from `test/rxgen.c` |
 
 ## Differences
@@ -34,3 +36,7 @@ own terms; look here for the correspondence.
   default and Emacs syntax nothing is escaped in a class and `\ ] ^ -` are
   written outside it (`([+.]|-)`). With Vim only `\ ] ^ -` are escaped
   (`[+\-.]`). Patterns without ASCII symbols in a class are the same.
+- **Conversion-table `REMAIN`.** A `REMAIN` must be shorter than its key,
+  or the line is an error (lenient loading keeps the lines before it). Such
+  a rule (`a x a`) makes cmigemo loop forever on a query. Every rule in the
+  standard tables shrinks.
