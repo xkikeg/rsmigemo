@@ -141,8 +141,18 @@ impl PatternBuilder {
 
     /// Append the pattern to `out`. Writes nothing if there are no words.
     pub fn write_to(&self, out: &mut String, syntax: &Syntax) {
-        if !self.is_empty() {
-            self.write_level(out, syntax, 0);
+        if self.is_empty() {
+            return;
+        }
+        // A word nests one level per character, so the levels still to
+        // write are kept here rather than on the call stack.
+        let mut pending = vec![Pending::Level(0)];
+        while let Some(next) = pending.pop() {
+            match next {
+                Pending::Level(node) => self.write_level(out, syntax, node, &mut pending),
+                Pending::Char(ch) => write_char(out, syntax.escape, ch),
+                Pending::Text(text) => out.push_str(text),
+            }
         }
     }
 
@@ -150,7 +160,16 @@ impl PatternBuilder {
     /// (as a class if more than one), then each branch as char + subpattern.
     ///
     /// For children `a`, `b`, `c…` and `d…` this is `([ab]|c…|d…)`.
-    fn write_level(&self, out: &mut String, syntax: &Syntax, parent: usize) {
+    ///
+    /// The group's start, the class and the standalone leaves are written
+    /// at once; the branches and the group's end go on `pending`.
+    fn write_level<'s>(
+        &self,
+        out: &mut String,
+        syntax: &'s Syntax,
+        parent: usize,
+        pending: &mut Vec<Pending<'s>>,
+    ) {
         let children = &self.nodes[parent].children;
         // A leaf ends a word, so it is a single character. A branch is a
         // character followed by a subpattern.
@@ -202,18 +221,32 @@ impl PatternBuilder {
                 write_char(out, syntax.escape, e.ch);
             }
         }
-        if branch_count > 0 {
-            for e in branches() {
-                push_or(out);
-                write_char(out, syntax.escape, e.ch);
-                out.push_str(&syntax.newline);
-                self.write_level(out, syntax, e.node.index());
+        let wrote_part = !first;
+
+        // The rest is pushed last first, so it pops in writing order.
+        if needs_group {
+            pending.push(Pending::Text(&syntax.group_close));
+        }
+        let mut before = branch_count;
+        for e in branches().rev() {
+            before -= 1;
+            pending.push(Pending::Level(e.node.index()));
+            pending.push(Pending::Text(&syntax.newline));
+            pending.push(Pending::Char(e.ch));
+            if before > 0 || wrote_part {
+                pending.push(Pending::Text(&syntax.or));
             }
         }
-        if needs_group {
-            out.push_str(&syntax.group_close);
-        }
     }
+}
+
+/// Output that [`PatternBuilder::write_to`] has yet to write.
+enum Pending<'s> {
+    /// The alternatives below a node.
+    Level(usize),
+    /// A character, escaped as outside a class.
+    Char(char),
+    Text(&'s str),
 }
 
 /// Write `len` leaves as a character class. A single leaf is written bare,
@@ -298,6 +331,23 @@ mod tests {
         b.add("ab");
         b.add("x");
         assert_eq!(b.build(&Syntax::cmigemo()), "(x|ab)");
+    }
+
+    #[test]
+    fn long_and_deep_words() {
+        // Deeper than the call stack would allow with one frame per level.
+        let long = "a".repeat(1_000_000);
+        assert_eq!(build(&[&long], &Syntax::cmigemo()), long);
+        // A branch at every level.
+        assert_eq!(
+            build(&["b", "ab", "aab"], &Syntax::cmigemo()),
+            "(b|a(b|ab))"
+        );
+        let words: Vec<String> = (0..2_000).map(|n| "a".repeat(n) + "b").collect();
+        let words: Vec<&str> = words.iter().map(String::as_str).collect();
+        let pattern = build(&words, &Syntax::cmigemo());
+        assert!(pattern.starts_with("(b|a(b|a("), "{}", &pattern[..20]);
+        assert_eq!(pattern.matches('|').count(), 1_999);
     }
 
     #[test]
