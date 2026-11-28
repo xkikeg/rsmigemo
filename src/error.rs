@@ -25,6 +25,13 @@ pub enum Error {
         /// What was wrong with the line.
         kind: ParseErrorKind,
     },
+    /// A static dictionary (sdict) is malformed.
+    InvalidSdict {
+        /// The file, if the data came from one.
+        path: Option<PathBuf>,
+        /// What was wrong with it.
+        reason: &'static str,
+    },
 }
 
 /// The kind of [`Error::Parse`].
@@ -62,11 +69,14 @@ impl Error {
     /// Attach `path` to an error produced while parsing in-memory data.
     /// The path is converted only if the error has none yet.
     pub(crate) fn with_path(mut self, file: impl Into<PathBuf>) -> Self {
-        if let Error::Parse {
-            path: path @ None, ..
-        } = &mut self
-        {
-            *path = Some(file.into());
+        match &mut self {
+            Error::Parse {
+                path: path @ None, ..
+            }
+            | Error::InvalidSdict {
+                path: path @ None, ..
+            } => *path = Some(file.into()),
+            _ => {}
         }
         self
     }
@@ -89,6 +99,10 @@ impl fmt::Display for Error {
             Error::Parse { path, line, kind } => match path {
                 Some(path) => write!(f, "{}:{line}: {kind}", path.display()),
                 None => write!(f, "line {line}: {kind}"),
+            },
+            Error::InvalidSdict { path, reason } => match path {
+                Some(path) => write!(f, "{}: invalid static dictionary: {reason}", path.display()),
+                None => write!(f, "invalid static dictionary: {reason}"),
             },
         }
     }

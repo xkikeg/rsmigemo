@@ -1,6 +1,7 @@
 //! The migemo dictionary: reading (yomigana, the kana spelling of a word)
 //! → words.
 
+mod sdict;
 mod text;
 
 use std::collections::BTreeMap;
@@ -21,8 +22,8 @@ const NONE: u32 = u32::MAX;
 /// contiguous slice. [`lookup`](Self::lookup) is a binary search per character
 /// followed by a scan of one slice.
 ///
-/// Build one from text with [`DictionaryBuilder`], or load a file with
-/// [`Dictionary::open`].
+/// Build one from text with [`DictionaryBuilder`], or load either format
+/// with [`Dictionary::open`].
 //
 // Offsets are `u32`, not `usize`, because the sdict format stores them that
 // way and it halves the size of `Node`. That limits a dictionary to 4 GiB of
@@ -70,8 +71,9 @@ impl Dictionary {
         Ok(builder.build())
     }
 
-    /// Load a migemo-dict text file. With `None`, the encoding is detected
-    /// from the contents.
+    /// Load a dictionary file, either migemo-dict text or a static dictionary
+    /// (detected by its `MGS1` header). `encoding` applies to text files and
+    /// is detected with `None`; static dictionaries record their own.
     pub fn open(path: impl AsRef<Path>, encoding: Option<Encoding>) -> Result<Self> {
         Ok(Self::open_detect(path.as_ref(), encoding)?.0)
     }
@@ -80,9 +82,23 @@ impl Dictionary {
     /// read in.
     pub(crate) fn open_detect(path: &Path, encoding: Option<Encoding>) -> Result<(Self, Encoding)> {
         let bytes = crate::io::read_file(path)?;
+        if sdict::is_sdict(&bytes) {
+            return sdict::read(&bytes).map_err(|e| e.with_path(path));
+        }
         let encoding = encoding::resolve(encoding, &bytes);
         let dict = Self::parse(&encoding.decode(&bytes)).map_err(|e| e.with_path(path))?;
         Ok((dict, encoding))
+    }
+
+    /// Read a static dictionary (sdict) from memory.
+    pub fn from_sdict(bytes: &[u8]) -> Result<Self> {
+        Ok(sdict::read(bytes)?.0)
+    }
+
+    /// Write this dictionary in cmigemo's static dictionary (sdict) format,
+    /// with UTF-8 text.
+    pub fn write_sdict<W: std::io::Write>(&self, writer: W) -> std::io::Result<()> {
+        sdict::write(self, writer)
     }
 
     /// Whether the dictionary has no entries.
@@ -210,8 +226,8 @@ impl DictionaryBuilder {
         Ok(self)
     }
 
-    /// Add every entry of a migemo-dict text file. With `None`, the encoding
-    /// is detected from the contents.
+    /// Add every entry of a dictionary file (text or static). With `None`,
+    /// the encoding of a text file is detected from the contents.
     pub fn add_from_file(
         &mut self,
         path: impl AsRef<Path>,
@@ -219,8 +235,13 @@ impl DictionaryBuilder {
     ) -> Result<&mut Self> {
         let path = path.as_ref();
         let bytes = crate::io::read_file(path)?;
-        let text = encoding::resolve(encoding, &bytes).decode(&bytes);
-        self.add_from_text(&text).map_err(|e| e.with_path(path))?;
+        if sdict::is_sdict(&bytes) {
+            let (dict, _) = sdict::read(&bytes).map_err(|e| e.with_path(path))?;
+            self.add_dictionary(&dict);
+        } else {
+            let text = encoding::resolve(encoding, &bytes).decode(&bytes);
+            self.add_from_text(&text).map_err(|e| e.with_path(path))?;
+        }
         Ok(self)
     }
 

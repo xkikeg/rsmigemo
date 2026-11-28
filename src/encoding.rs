@@ -91,6 +91,45 @@ impl Encoding {
             Encoding::EucJp => decode_euc_jp(bytes),
         }
     }
+
+    /// Decode one sdict node code: a Unicode scalar for UTF-8, or
+    /// `(lead << 8) | trail` (or a single byte) for the legacy encodings.
+    pub(crate) fn decode_code(self, code: u32) -> Option<char> {
+        let legacy = match self {
+            Encoding::Cp932 => encoding_rs::SHIFT_JIS,
+            Encoding::EucJp => encoding_rs::EUC_JP,
+            Encoding::Utf8 => return char::from_u32(code),
+        };
+        let buf = [(code >> 8) as u8, code as u8];
+        let bytes = match code {
+            0..=0xff => &buf[1..],
+            0x100..=0xffff => &buf[..],
+            _ => return None,
+        };
+        if self == Encoding::EucJp
+            && let Some(ch) = <[u8; 2]>::try_from(bytes).ok().and_then(euc_jp_jis_form)
+        {
+            return Some(ch);
+        }
+        let s = legacy.decode_without_bom_handling_and_without_replacement(bytes)?;
+        let mut chars = s.chars();
+        match (chars.next(), chars.next()) {
+            (Some(c), None) => Some(c),
+            _ => None,
+        }
+    }
+
+    /// The encoding for the ID byte in an sdict header, or `None` if the ID
+    /// is unknown.
+    pub(crate) fn from_sdict_id(id: u8) -> Option<Encoding> {
+        match id {
+            1 => Some(Encoding::Cp932),
+            2 => Some(Encoding::EucJp),
+            // 0 ("none") is raw bytes, which we read as UTF-8.
+            0 | 3 => Some(Encoding::Utf8),
+            _ => None,
+        }
+    }
 }
 
 /// The encoding to read `bytes` in: `encoding` if given, otherwise the
@@ -233,6 +272,17 @@ mod tests {
         assert_eq!(super::resolve(None, &sjis), Encoding::Cp932);
         assert_eq!(super::resolve(Some(Encoding::Utf8), &sjis), Encoding::Utf8);
         assert_eq!(super::resolve(None, b"ascii"), Encoding::Utf8);
+    }
+
+    #[test]
+    fn decode_code() {
+        assert_eq!(Encoding::Utf8.decode_code(0x3042), Some('あ'));
+        assert_eq!(Encoding::Cp932.decode_code(0x82a0), Some('あ'));
+        assert_eq!(Encoding::EucJp.decode_code(0xa4a2), Some('あ'));
+        assert_eq!(Encoding::EucJp.decode_code(0xa1c1), Some('〜'));
+        assert_eq!(Encoding::Cp932.decode_code(0x8160), Some('～'));
+        assert_eq!(Encoding::Cp932.decode_code(b'a' as u32), Some('a'));
+        assert_eq!(Encoding::Cp932.decode_code(0xb1), Some('ｱ'));
     }
 
     #[test]
