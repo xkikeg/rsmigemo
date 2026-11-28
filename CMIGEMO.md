@@ -16,6 +16,8 @@ own terms; look here for the correspondence.
 | `encoding.rs`   | `charset.c` (`charset_detect_buf`)        |
 | `syntax.rs`     | `migemo_set_operator`, `migemo_set_escape_chars` in `migemo.c` |
 | `convert.rs`    | `romaji.c`; its tests are from `test/romaji.c` |
+| `dict/mod.rs`   | `mtree.c`; the trie layout is `stree.c`'s (`stree_fill_mnode`) |
+| `dict/text.rs`  | `mtree_load` in `mtree.c` |
 | `io.rs`         | `ioreader_*.c` |
 | `pattern.rs`    | `rxgen.c`; its tests are from `test/rxgen.c` |
 
