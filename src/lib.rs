@@ -24,6 +24,7 @@
 //!
 //! - `embedded-tables` (default): built-in conversion tables.
 //! - `zstd`: read `.zst`-compressed dictionaries.
+//! - `regex`: `Migemo::regex` returns a compiled `regex::Regex`.
 
 #![warn(missing_docs)]
 

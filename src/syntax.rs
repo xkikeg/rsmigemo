@@ -87,6 +87,19 @@ impl Syntax {
         }
     }
 
+    /// The [`regex`](https://docs.rs/regex) crate: non-capturing groups, and
+    /// every metacharacter in dictionary words escaped, inside classes too,
+    /// so the pattern always compiles.
+    pub fn rust_regex() -> Self {
+        const META: EscapeSet = EscapeSet::new(r"\.+*?()|[]{}^$#&-~");
+        Syntax {
+            group_open: "(?:".into(),
+            escape: META,
+            class_escape: META,
+            ..Syntax::cmigemo()
+        }
+    }
+
     /// The same syntax with no [`newline`](Self::newline) pattern, as
     /// `cmigemo -n`.
     pub fn without_newline(mut self) -> Self {
