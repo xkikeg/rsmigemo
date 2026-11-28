@@ -20,6 +20,7 @@ own terms; look here for the correspondence.
 | `dict/sdict.rs` | `stree.c` |
 | `dict/text.rs`  | `mtree_load` in `mtree.c` |
 | `io.rs`         | `ioreader_*.c` |
+| `main.rs`       | `src/main.c` (the `cmigemo` command); `-r/--rust` is new |
 | `migemo.rs`     | `migemo.c`; `tests/migemo.rs` is from `test/migemo.c` |
 | `pattern.rs`    | `rxgen.c`; its tests are from `test/rxgen.c` |
 
@@ -47,3 +48,8 @@ own terms; look here for the correspondence.
 - **sdict byte order.** rsmigemo reads and writes little-endian. cmigemo
   uses the native byte order, which is little-endian on every platform it
   ships on, so the files are the same.
+- **Command line.** An argument that is not an option is an error (cmigemo
+  ignores it, so a forgotten `-w` started the interactive prompt), and
+  `--sdict` rejects a text dictionary. Explicit dictionary paths are opened
+  as given instead of being checked for a regular file first, so pipes such
+  as `<(zcat dict.gz)` work.

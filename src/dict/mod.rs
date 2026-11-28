@@ -95,6 +95,15 @@ impl Dictionary {
         Ok(sdict::read(bytes)?.0)
     }
 
+    /// Load a static dictionary (sdict) file, which may be `.zst`
+    /// compressed. Unlike [`open`](Self::open), a text dictionary is an
+    /// error.
+    pub fn open_sdict(path: impl AsRef<Path>) -> Result<Self> {
+        let path = path.as_ref();
+        let bytes = crate::io::read_file(path)?;
+        Self::from_sdict(&bytes).map_err(|e| e.with_path(path))
+    }
+
     /// Write this dictionary in cmigemo's static dictionary (sdict) format,
     /// with UTF-8 text.
     pub fn write_sdict<W: std::io::Write>(&self, writer: W) -> std::io::Result<()> {
