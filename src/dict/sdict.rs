@@ -13,7 +13,7 @@
 
 use std::io;
 
-use super::{Dictionary, DictionaryBuilder, NONE, Node};
+use super::{Dictionary, DictionaryBuilder, NONE, Node, index};
 use crate::encoding::Encoding;
 use crate::error::{Error, Result};
 
@@ -204,7 +204,7 @@ fn subtree_spans(
                 let end = buf[w..].windows(2).position(|p| p == [0, 0]);
                 w + end.ok_or("word list not terminated")? + 2
             };
-            extend((w as u32, own_end as u32))?;
+            extend((index(w), index(own_end)))?;
         }
         for child in node.start..node.end {
             extend(spans[child as usize])?;
@@ -277,8 +277,8 @@ fn rebuild(raw: &[RawNode], buf: &[u8], encoding: Encoding) -> Result<Dictionary
 pub(super) fn write<W: io::Write>(dict: &Dictionary, mut writer: W) -> io::Result<()> {
     let mut header = [0u8; HEADER_LEN];
     header[..4].copy_from_slice(MAGIC);
-    header[4..8].copy_from_slice(&(dict.nodes.len() as u32).to_le_bytes());
-    header[8..12].copy_from_slice(&(dict.words.len() as u32).to_le_bytes());
+    header[4..8].copy_from_slice(&index(dict.nodes.len()).to_le_bytes());
+    header[8..12].copy_from_slice(&index(dict.words.len()).to_le_bytes());
     header[12] = ENCODING_UTF8;
     writer.write_all(&header)?;
     // Nodes in chunks, so an unbuffered writer is not called per node.
@@ -341,8 +341,8 @@ mod tests {
     fn sdict_bytes(raw: &[RawNode], words: &[u8], encoding: u8) -> Vec<u8> {
         let mut bytes = Vec::new();
         bytes.extend_from_slice(MAGIC);
-        bytes.extend_from_slice(&(raw.len() as u32).to_le_bytes());
-        bytes.extend_from_slice(&(words.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(&index(raw.len()).to_le_bytes());
+        bytes.extend_from_slice(&index(words.len()).to_le_bytes());
         bytes.extend_from_slice(&[encoding, 0, 0, 0]);
         for n in raw {
             for v in [n.code, n.start, n.end, n.word_idx] {
@@ -500,10 +500,10 @@ mod tests {
             if i > 0 {
                 let ch = n.ch.to_string();
                 let (b, _, _) = encoding_rs::SHIFT_JIS.encode(&ch);
-                raw[i].code = b.iter().fold(0, |acc, &x| acc << 8 | x as u32);
+                raw[i].code = b.iter().fold(0, |acc, &x| acc << 8 | u32::from(x));
             }
             if n.word_idx != NONE {
-                raw[i].word_idx = words.len() as u32;
+                raw[i].word_idx = index(words.len());
                 for w in d.own_words(n.word_idx) {
                     words.extend_from_slice(&encoding_rs::SHIFT_JIS.encode(w).0);
                     words.push(0);
