@@ -32,6 +32,11 @@ pub enum Error {
         /// What was wrong with it.
         reason: &'static str,
     },
+    /// The file is `.zst`-compressed but the `zstd` feature is disabled.
+    UnsupportedCompression {
+        /// The compressed file.
+        path: PathBuf,
+    },
 }
 
 /// The kind of [`Error::Parse`].
@@ -104,6 +109,11 @@ impl fmt::Display for Error {
                 Some(path) => write!(f, "{}: invalid static dictionary: {reason}", path.display()),
                 None => write!(f, "invalid static dictionary: {reason}"),
             },
+            Error::UnsupportedCompression { path } => write!(
+                f,
+                "{}: zstd-compressed files need the `zstd` feature",
+                path.display()
+            ),
         }
     }
 }
